@@ -1,0 +1,2496 @@
+/**
+ * videoPlus - ExtendScript (PPro CEP Host)
+ * ES3 기반 - JSON.stringify 대신 직접 문자열 생성
+ */
+
+function testConnection() {
+  return "ExtendScript OK"
+}
+
+function testApp() {
+  try {
+    var result = ""
+    result += "app: " + typeof app + " "
+    result += "app.project: " + typeof app.project + " "
+    if (app.project) {
+      result += "project.name: " + app.project.name + " "
+      result += "activeSequence: " + typeof app.project.activeSequence
+    }
+    return result
+  } catch (e) {
+    return "Error: " + e.toString()
+  }
+}
+
+function getActiveSequenceInfo() {
+  try {
+    if (!app) return '{"error":"app 없음"}'
+    if (!app.project) return '{"error":"project 없음"}'
+
+    var seq = app.project.activeSequence
+    if (!seq) return '{"error":"시퀀스를 열어주세요"}'
+
+    // JSON.stringify 대신 직접 문자열 생성
+    var result = "{"
+    result += '"name":"' + seq.name + '",'
+    result += '"id":"' + seq.sequenceID + '"'
+    result += "}"
+
+    return result
+  } catch (e) {
+    return '{"error":"' + e.toString() + '"}'
+  }
+}
+
+/**
+ * 오디오 프리셋 경로 찾기
+ */
+function findAudioPreset() {
+  var versions = ["2025", "2024", "2023", "2022"]
+  var presetFiles = [
+    "3F3F3F3F_57415645/Waveform Audio 48kHz 16-bit.epr",
+    "3F3F3F3F_57415645/Waveform Audio 44.1kHz 16-bit.epr",
+  ]
+
+  for (var v = 0; v < versions.length; v++) {
+    var basePath =
+      "/Applications/Adobe Media Encoder " +
+      versions[v] +
+      "/Adobe Media Encoder " +
+      versions[v] +
+      ".app/Contents/MediaIO/systempresets"
+
+    for (var p = 0; p < presetFiles.length; p++) {
+      var presetPath = basePath + "/" + presetFiles[p]
+      var presetFile = new File(presetPath)
+      if (presetFile.exists) {
+        return presetPath
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * 오디오 렌더링 (트랙 0번만)
+ * @param {string} outputPath - 저장 경로 (예: /tmp/audio.wav)
+ * @returns {string} JSON 결과
+ */
+function renderAudio(outputPath) {
+  try {
+    if (!app || !app.project) {
+      return '{"success":false,"error":"프로젝트가 없습니다"}'
+    }
+
+    var seq = app.project.activeSequence
+    if (!seq) {
+      return '{"success":false,"error":"시퀀스를 열어주세요"}'
+    }
+
+    // 원래 뮤트 상태 저장
+    var originalVideoMutes = []
+    var originalAudioMutes = []
+
+    // 비디오 트랙 전부 뮤트
+    var videoTrackCount = seq.videoTracks.numTracks
+    for (var i = 0; i < videoTrackCount; i++) {
+      var vTrack = seq.videoTracks[i]
+      originalVideoMutes.push(vTrack.isMuted())
+      vTrack.setMute(1) // 1 = muted
+    }
+
+    // 오디오 트랙 0번만 활성화
+    var audioTrackCount = seq.audioTracks.numTracks
+    for (var j = 0; j < audioTrackCount; j++) {
+      var aTrack = seq.audioTracks[j]
+      originalAudioMutes.push(aTrack.isMuted())
+      aTrack.setMute(j !== 0 ? 1 : 0) // 0번만 unmute
+    }
+
+    // 프리셋 찾기
+    var presetPath = findAudioPreset()
+    if (!presetPath) {
+      // 트랙 복원 후 에러 반환
+      restoreTracks(seq, originalVideoMutes, originalAudioMutes)
+      return '{"success":false,"error":"오디오 프리셋을 찾을 수 없습니다"}'
+    }
+
+    // 렌더링 실행
+    // workAreaType: 0 = entire, 1 = in/out, 2 = work area
+    var success = seq.exportAsMediaDirect(outputPath, presetPath, 0)
+
+    // 트랙 상태 복원
+    restoreTracks(seq, originalVideoMutes, originalAudioMutes)
+
+    if (success) {
+      return(
+        '{"success":true,"outputPath":"' +
+        outputPath.replace(/\\/g, "\\\\") +
+        '"}'
+      )
+    } else {
+      return '{"success":false,"error":"렌더링 실패"}'
+    }
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * 트랙 뮤트 상태 복원
+ */
+function restoreTracks(seq, videoMutes, audioMutes) {
+  try {
+    for (var i = 0; i < seq.videoTracks.numTracks; i++) {
+      seq.videoTracks[i].setMute(videoMutes[i] ? 1 : 0)
+    }
+    for (var j = 0; j < seq.audioTracks.numTracks; j++) {
+      seq.audioTracks[j].setMute(audioMutes[j] ? 1 : 0)
+    }
+  } catch (e) {
+    // 복원 실패해도 무시
+  }
+}
+
+/**
+ * 시퀀스 프레임레이트 가져오기
+ */
+function getSequenceFramerate() {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"error":"시퀀스 없음"}'
+
+    // timebase에서 프레임레이트 계산
+    var timebase = seq.timebase
+    // timebase는 "10160640000" 같은 ticks per second 값
+    // 254016000000 ticks = 1 second (PPro 기준)
+    var ticksPerSecond = 254016000000
+    var frameRate = ticksPerSecond / parseInt(timebase)
+
+    return '{"frameRate":' + frameRate + ',"timebase":"' + timebase + '"}'
+  } catch (e) {
+    return '{"error":"' + e.toString() + '"}'
+  }
+}
+
+/**
+ * 비디오 트랙 0번의 클립 정보 가져오기 (initWords용)
+ */
+function getVideoTrackItems() {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"error":"시퀀스 없음"}'
+
+    if (seq.videoTracks.numTracks === 0) {
+      return '{"error":"비디오 트랙 없음"}'
+    }
+
+    var track = seq.videoTracks[0]
+    var clips = track.clips
+    var items = []
+
+    for (var i = 0; i < clips.numItems; i++) {
+      var clip = clips[i]
+
+      // start, end, inPoint, outPoint를 초 단위로
+      var startTime = clip.start.seconds
+      var endTime = clip.end.seconds
+      var inPoint = clip.inPoint.seconds
+      var outPoint = clip.outPoint.seconds
+
+      // ticks 값도 가져오기
+      var startTicks = clip.start.ticks
+      var endTicks = clip.end.ticks
+      var inPointTicks = clip.inPoint.ticks
+      var outPointTicks = clip.outPoint.ticks
+
+      items.push({
+        index: i,
+        startTime: startTime,
+        endTime: endTime,
+        inPoint: inPoint,
+        outPoint: outPoint,
+        startTicks: startTicks,
+        endTicks: endTicks,
+        inPointTicks: inPointTicks,
+        outPointTicks: outPointTicks,
+      })
+    }
+
+    // ES3에서 JSON.stringify 없으므로 직접 생성
+    var result = '{"items":['
+    for (var j = 0; j < items.length; j++) {
+      if (j > 0) result += ","
+      var item = items[j]
+      result += "{"
+      result += '"index":' + item.index + ","
+      result += '"startTime":' + item.startTime + ","
+      result += '"endTime":' + item.endTime + ","
+      result += '"inPoint":' + item.inPoint + ","
+      result += '"outPoint":' + item.outPoint + ","
+      result += '"startTicks":"' + item.startTicks + '",'
+      result += '"endTicks":"' + item.endTicks + '",'
+      result += '"inPointTicks":"' + item.inPointTicks + '",'
+      result += '"outPointTicks":"' + item.outPointTicks + '"'
+      result += "}"
+    }
+    result += "]}"
+
+    return result
+  } catch (e) {
+    return '{"error":"' + e.toString() + '"}'
+  }
+}
+
+/**
+ * Ticks ↔ Seconds 변환 (PPro 기준: 254016000000 ticks = 1 second)
+ */
+function ticksToSeconds(ticks) {
+  return parseFloat(ticks) / 254016000000
+}
+
+function secondsToTicks(seconds) {
+  return Math.round(seconds * 254016000000)
+}
+
+/**
+ * 플레이헤드 위치 설정 (초 단위)
+ */
+function setPlayerPosition(seconds) {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"success":false,"error":"시퀀스 없음"}'
+
+    var ticks = secondsToTicks(seconds)
+    seq.setPlayerPosition(ticks.toString())
+
+    return '{"success":true}'
+  } catch (e) {
+    return '{"success":false,"error":"' + e.toString() + '"}'
+  }
+}
+
+/**
+ * 시간 범위 삭제 (QE DOM razor 사용)
+ * @param {string} startTicks - 시작 시간 (ticks 문자열)
+ * @param {string} endTicks - 끝 시간 (ticks 문자열)
+ * @param {number} trackIndex - 트랙 인덱스 (기본 0)
+ */
+function deleteTimeRange(startTicks, endTicks, trackIndex) {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"success":false,"error":"시퀀스 없음"}'
+
+    trackIndex = trackIndex || 0
+
+    // 비디오 트랙
+    var videoTrack = seq.videoTracks[trackIndex]
+    if (!videoTrack) return '{"success":false,"error":"비디오 트랙 없음"}'
+
+    // 오디오 트랙 (같은 인덱스)
+    var audioTrack = seq.audioTracks[trackIndex]
+
+    // 해당 시간에 있는 클립 찾기
+    var videoClip = null
+    var videoClipIndex = -1
+
+    for (var i = 0; i < videoTrack.clips.numItems; i++) {
+      var clip = videoTrack.clips[i]
+      var clipStartTicks = clip.start.ticks
+      var clipEndTicks = clip.end.ticks
+
+      // 클립이 해당 범위를 포함하는지 확인
+      if (
+        parseFloat(clipStartTicks) <= parseFloat(startTicks) &&
+        parseFloat(clipEndTicks) >= parseFloat(endTicks)
+      ) {
+        videoClip = clip
+        videoClipIndex = i
+        break
+      }
+    }
+
+    if (!videoClip) {
+      return(
+        '{"success":false,"error":"해당 시간에 클립 없음 (start:' +
+        startTicks +
+        ", end:" +
+        endTicks +
+        ')"}'
+      )
+    }
+
+    var clipStartTicks = videoClip.start.ticks
+    var clipEndTicks = videoClip.end.ticks
+
+    // 케이스 판단
+    var isWholeClip = clipStartTicks === startTicks && clipEndTicks === endTicks
+    var isFirstWord = clipStartTicks === startTicks
+    var isLastWord = clipEndTicks === endTicks
+
+    if (isWholeClip) {
+      // 전체 클립 삭제
+      videoClip.remove(true, true)
+      // 오디오도 삭제
+      if (audioTrack && audioTrack.clips.numItems > videoClipIndex) {
+        audioTrack.clips[videoClipIndex].remove(true, true)
+      }
+      return '{"success":true,"case":"wholeClip"}'
+    }
+
+    if (isFirstWord) {
+      // 첫 단어: inPoint 늘리고 start를 endTicks로 이동
+      var duration = parseFloat(endTicks) - parseFloat(startTicks)
+      var newInPointTicks = parseFloat(videoClip.inPoint.ticks) + duration
+
+      // inPoint 조정
+      videoClip.inPoint.ticks = newInPointTicks.toString()
+      // start 조정 (뒤로 이동)
+      videoClip.start.ticks = endTicks
+
+      // 오디오도 동일하게
+      if (audioTrack && audioTrack.clips.numItems > videoClipIndex) {
+        var audioClip = audioTrack.clips[videoClipIndex]
+        audioClip.inPoint.ticks = newInPointTicks.toString()
+        audioClip.start.ticks = endTicks
+      }
+
+      // 이 클립과 뒤 클립들을 앞으로 이동 (ripple)
+      moveClipsLeft(videoTrack, videoClipIndex, duration)
+      if (audioTrack) {
+        moveClipsLeft(audioTrack, videoClipIndex, duration)
+      }
+
+      return '{"success":true,"case":"firstWord"}'
+    }
+
+    if (isLastWord) {
+      // 마지막 단어: end를 startTicks로 이동
+      videoClip.end.ticks = startTicks
+
+      // 오디오도 동일하게
+      if (audioTrack && audioTrack.clips.numItems > videoClipIndex) {
+        audioTrack.clips[videoClipIndex].end.ticks = startTicks
+      }
+
+      // 뒤 클립들 앞으로 이동 (ripple)
+      var duration = parseFloat(endTicks) - parseFloat(startTicks)
+      moveClipsLeft(videoTrack, videoClipIndex + 1, duration)
+      if (audioTrack) {
+        moveClipsLeft(audioTrack, videoClipIndex + 1, duration)
+      }
+
+      return '{"success":true,"case":"lastWord"}'
+    }
+
+    // 중간 단어: 클립을 수동으로 분할
+    // 방법:
+    // 1. 원본 end를 startTicks로 (앞부분만 남김)
+    // 2. 새 클립 삽입 (뒷부분)
+    // 3. 뒤 클립들 ripple
+
+    var projectItem = videoClip.projectItem
+    if (!projectItem) {
+      return '{"success":false,"error":"projectItem 없음"}'
+    }
+
+    // 원본 클립 정보 저장
+    var origStartTicks = videoClip.start.ticks
+    var origEndTicks = videoClip.end.ticks
+    var origInPointTicks = videoClip.inPoint.ticks
+
+    // 삭제할 구간의 duration
+    var deleteDuration = parseFloat(endTicks) - parseFloat(startTicks)
+
+    // 1. 원본 클립의 end를 startTicks로 (앞부분만 남김)
+    videoClip.end.ticks = startTicks
+
+    // 2. 뒷부분 클립 삽입 (endTicks가 아닌 startTicks 위치에 - ripple 효과)
+    // 뒷부분의 inPoint = 원래 inPoint + (endTicks - origStart)
+    var backInPointTicks =
+      parseFloat(origInPointTicks) +
+      (parseFloat(endTicks) - parseFloat(origStartTicks))
+
+    // overwriteClip 대신 insertClip 사용 (time은 ticks string)
+    videoTrack.insertClip(projectItem, startTicks, 0, 0)
+
+    // 새로 삽입된 클립 찾아서 설정
+    for (var n = 0; n < videoTrack.clips.numItems; n++) {
+      var nc = videoTrack.clips[n]
+      // startTicks 근처에서 시작하는 클립 찾기
+      if (
+        Math.abs(parseFloat(nc.start.ticks) - parseFloat(startTicks)) <
+        254016000
+      ) {
+        // 1ms 오차
+        // 원본 클립이 아닌 새 클립인지 확인
+        if (nc.end.ticks !== startTicks) {
+          nc.inPoint.ticks = backInPointTicks.toString()
+          // end는 원래 위치에서 삭제 구간만큼 앞으로
+          var newEndTicks = parseFloat(origEndTicks) - deleteDuration
+          nc.end.ticks = newEndTicks.toString()
+          break
+        }
+      }
+    }
+
+    // 3. 뒤 클립들 ripple (이미 insert로 밀렸을 수 있음)
+    // insert는 자동으로 ripple하므로 추가 이동 불필요할 수 있음
+
+    // 오디오도 동일하게
+    if (audioTrack && audioTrack.clips.numItems > 0) {
+      // 같은 시간대의 오디오 클립 찾기
+      var audioClip = null
+      for (var a = 0; a < audioTrack.clips.numItems; a++) {
+        var ac = audioTrack.clips[a]
+        if (
+          parseFloat(ac.start.ticks) <= parseFloat(origStartTicks) &&
+          parseFloat(ac.end.ticks) >= parseFloat(origEndTicks)
+        ) {
+          audioClip = ac
+          break
+        }
+      }
+
+      if (audioClip && audioClip.projectItem) {
+        var audioOrigInPoint = audioClip.inPoint.ticks
+        var audioOrigStart = audioClip.start.ticks
+        var audioOrigEnd = audioClip.end.ticks
+
+        // 앞부분만 남기기
+        audioClip.end.ticks = startTicks
+
+        // 뒷부분 삽입
+        var audioBackInPoint =
+          parseFloat(audioOrigInPoint) +
+          (parseFloat(endTicks) - parseFloat(audioOrigStart))
+        audioTrack.insertClip(audioClip.projectItem, startTicks, 0, 0)
+
+        // 새 오디오 클립 설정
+        for (var b = 0; b < audioTrack.clips.numItems; b++) {
+          var nac = audioTrack.clips[b]
+          if (
+            Math.abs(parseFloat(nac.start.ticks) - parseFloat(startTicks)) <
+            254016000
+          ) {
+            if (nac.end.ticks !== startTicks) {
+              nac.inPoint.ticks = audioBackInPoint.toString()
+              nac.end.ticks = (
+                parseFloat(audioOrigEnd) - deleteDuration
+              ).toString()
+              break
+            }
+          }
+        }
+      }
+    }
+
+    return '{"success":true,"case":"middleWord"}'
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * 클립들을 왼쪽으로 이동 (ripple)
+ */
+function moveClipsLeft(track, fromIndex, deltaTicks) {
+  for (var i = fromIndex; i < track.clips.numItems; i++) {
+    var clip = track.clips[i]
+    var newStart = parseFloat(clip.start.ticks) - deltaTicks
+    clip.start.ticks = newStart.toString()
+  }
+}
+
+/**
+ * QE DOM 테스트 - razor 사용 가능 여부 확인
+ */
+function testQE() {
+  try {
+    // QE 활성화
+    app.enableQE()
+
+    if (typeof qe === "undefined") {
+      return '{"success":false,"error":"qe 객체 없음"}'
+    }
+
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) {
+      return '{"success":false,"error":"QE 시퀀스 없음"}'
+    }
+
+    // QE 트랙 확인
+    var videoTrackCount = qeSeq.numVideoTracks
+
+    var qeTrack = qeSeq.getVideoTrackAt(0)
+    if (!qeTrack) {
+      return '{"success":false,"error":"QE 비디오 트랙 없음"}'
+    }
+
+    // razor 함수 존재 확인
+    var hasRazor = typeof qeTrack.razor === "function"
+
+    // CTI (Current Time Indicator) 확인
+    var cti = qeSeq.CTI
+
+    return(
+      '{"success":true,' +
+      '"videoTrackCount":' +
+      videoTrackCount +
+      "," +
+      '"hasRazor":' +
+      hasRazor +
+      "," +
+      '"CTI":"' +
+      cti +
+      '"}'
+    )
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * QE razor로 특정 시간에 자르기 (테스트용)
+ * @param {number} timeSec - 자를 시간 (초 단위)
+ * @param {number} trackIndex - 트랙 인덱스 (기본 0)
+ */
+function razorAt(timeSec, trackIndex) {
+  try {
+    app.enableQE()
+
+    if (typeof qe === "undefined") {
+      return '{"success":false,"error":"qe 객체 없음"}'
+    }
+
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) {
+      return '{"success":false,"error":"QE 시퀀스 없음"}'
+    }
+
+    trackIndex = trackIndex || 0
+
+    var qeVideoTrack = qeSeq.getVideoTrackAt(trackIndex)
+    if (!qeVideoTrack) {
+      return '{"success":false,"error":"QE 비디오 트랙 없음"}'
+    }
+
+    if (typeof qeVideoTrack.razor !== "function") {
+      return '{"success":false,"error":"razor 함수 없음"}'
+    }
+
+    // ticks로 변환해서 시도
+    var ticks = secondsToTicks(timeSec)
+    qeVideoTrack.razor(ticks.toString())
+
+    // 오디오 트랙도 같이 자르기
+    var qeAudioTrack = qeSeq.getAudioTrackAt(trackIndex)
+    if (qeAudioTrack && typeof qeAudioTrack.razor === "function") {
+      qeAudioTrack.razor(ticks.toString())
+    }
+
+    return '{"success":true,"time":' + timeSec + ',"ticks":"' + ticks + '"}'
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * QE razor - timecode 문자열로 자르기 (비디오 + 오디오)
+ */
+function razorAtTimecode(timecode, trackIndex) {
+  try {
+    app.enableQE()
+
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) return '{"success":false,"error":"QE 시퀀스 없음"}'
+
+    trackIndex = trackIndex || 0
+
+    // 비디오 트랙 razor
+    var qeVideoTrack = qeSeq.getVideoTrackAt(trackIndex)
+    if (qeVideoTrack) {
+      qeVideoTrack.razor(timecode)
+    }
+
+    // 오디오 트랙도 razor
+    var qeAudioTrack = qeSeq.getAudioTrackAt(trackIndex)
+    if (qeAudioTrack) {
+      qeAudioTrack.razor(timecode)
+    }
+
+    return '{"success":true,"timecode":"' + timecode + '"}'
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * 초를 timecode 문자열로 변환 (HH:MM:SS:FF)
+ * 프레임레이트는 시퀀스에서 가져옴
+ */
+function secondsToTimecode(secs) {
+  var seq = app.project.activeSequence
+  var fps = 30 // 기본값
+
+  if (seq && seq.timebase) {
+    var ticksPerSecond = 254016000000
+    fps = Math.round(ticksPerSecond / parseInt(seq.timebase))
+  }
+
+  var totalFrames = Math.round(secs * fps)
+  var frames = totalFrames % fps
+  var totalSeconds = Math.floor(totalFrames / fps)
+  var seconds = totalSeconds % 60
+  var totalMinutes = Math.floor(totalSeconds / 60)
+  var minutes = totalMinutes % 60
+  var hours = Math.floor(totalMinutes / 60)
+
+  function pad(n, len) {
+    var s = String(n)
+    while (s.length < len) s = "0" + s
+    return s
+  }
+
+  return(
+    pad(hours, 2) +
+    ":" +
+    pad(minutes, 2) +
+    ":" +
+    pad(seconds, 2) +
+    ":" +
+    pad(frames, 2)
+  )
+}
+
+/**
+ * 모든 트랙에 razor (timecode)
+ */
+function razorAllTracks(timecode) {
+  try {
+    app.enableQE()
+
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) return '{"success":false,"error":"QE 시퀀스 없음"}'
+
+    var videoCount = qeSeq.numVideoTracks
+    var audioCount = qeSeq.numAudioTracks
+
+    // 모든 비디오 트랙 razor
+    for (var v = 0; v < videoCount; v++) {
+      var vTrack = qeSeq.getVideoTrackAt(v)
+      if (vTrack) {
+        try {
+          vTrack.razor(timecode)
+        } catch (e) {}
+      }
+    }
+
+    // 모든 오디오 트랙 razor
+    for (var a = 0; a < audioCount; a++) {
+      var aTrack = qeSeq.getAudioTrackAt(a)
+      if (aTrack) {
+        try {
+          aTrack.razor(timecode)
+        } catch (e) {}
+      }
+    }
+
+    return(
+      '{"success":true,"timecode":"' +
+      timecode +
+      '","videoTracks":' +
+      videoCount +
+      ',"audioTracks":' +
+      audioCount +
+      "}"
+    )
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * 모든 트랙에서 구간 삭제 (ticks 단위 - 정확한 값)
+ */
+function razorDeleteAllTracksTicks(startTicks, endTicks) {
+  try {
+    app.enableQE()
+
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) return '{"success":false,"error":"QE 시퀀스 없음"}'
+
+    // ticks → timecode 변환 (QE용)
+    var startTC = ticksToTimecode(startTicks)
+    var endTC = ticksToTimecode(endTicks)
+
+    // 1. 모든 트랙에 시작점 razor
+    razorAllTracks(startTC)
+
+    // 2. 모든 트랙에 끝점 razor
+    razorAllTracks(endTC)
+
+    // 3. 공식 DOM으로 중간 클립 삭제
+    var seq = app.project.activeSequence
+    var deletedCount = 0
+
+    // razor 후 생성된 정확한 ticks 계산 (timecode에서 역변환)
+    var razorStartTicks = timecodeToTicks(startTC)
+    var razorEndTicks = timecodeToTicks(endTC)
+
+    // 비디오 트랙 처리
+    for (var v = 0; v < seq.videoTracks.numTracks; v++) {
+      var vTrack = seq.videoTracks[v]
+      for (var i = vTrack.clips.numItems - 1; i >= 0; i--) {
+        var clip = vTrack.clips[i]
+        var clipStartTicks = clip.start.ticks
+        var clipEndTicks = clip.end.ticks
+
+        // 정확히 일치하는지 비교 (문자열 비교)
+        if (
+          clipStartTicks === razorStartTicks &&
+          clipEndTicks === razorEndTicks
+        ) {
+          clip.remove(true, true)
+          deletedCount++
+        }
+      }
+    }
+
+    // 오디오 트랙 처리
+    for (var a = 0; a < seq.audioTracks.numTracks; a++) {
+      var aTrack = seq.audioTracks[a]
+      for (var j = aTrack.clips.numItems - 1; j >= 0; j--) {
+        var aClip = aTrack.clips[j]
+        var aClipStartTicks = aClip.start.ticks
+        var aClipEndTicks = aClip.end.ticks
+
+        if (
+          aClipStartTicks === razorStartTicks &&
+          aClipEndTicks === razorEndTicks
+        ) {
+          aClip.remove(true, true)
+          deletedCount++
+        }
+      }
+    }
+
+    // razor 후 실제 잘린 지점의 소스 미디어 ticks 반환 (복원용)
+    var actualRazorInPoint = ""
+    var actualRazorOutPoint = ""
+
+    // razor 지점 직전 클립의 outPoint 찾기
+    var vTrack = seq.videoTracks[0]
+    for (var k = 0; k < vTrack.clips.numItems; k++) {
+      var c = vTrack.clips[k]
+      var cStartTC = ticksToTimecode(c.start.ticks)
+      var cEndTC = ticksToTimecode(c.end.ticks)
+
+      // 클립의 end가 startTC와 같으면 → 왼쪽 클립
+      if (cEndTC === startTC) {
+        actualRazorInPoint = c.outPoint.ticks
+      }
+      // 클립의 start가 startTC와 같으면 → 오른쪽 클립 (삭제 후)
+      // 근데 삭제됐으니까 없을 수 있음
+    }
+
+    // 삭제된 클립 바로 뒤 클립의 inPoint
+    for (var m = 0; m < vTrack.clips.numItems; m++) {
+      var c2 = vTrack.clips[m]
+      var c2StartTC = ticksToTimecode(c2.start.ticks)
+
+      // ripple 후 startTC 위치에서 시작하는 클립의 inPoint
+      if (c2StartTC === startTC) {
+        actualRazorOutPoint = c2.inPoint.ticks
+      }
+    }
+
+    return(
+      '{"success":true,"startTC":"' +
+      startTC +
+      '","endTC":"' +
+      endTC +
+      '","razorStartTicks":"' +
+      razorStartTicks +
+      '","razorEndTicks":"' +
+      razorEndTicks +
+      '","deletedClips":' +
+      deletedCount +
+      ',"actualRazorInPoint":"' +
+      actualRazorInPoint +
+      '","actualRazorOutPoint":"' +
+      actualRazorOutPoint +
+      '"}'
+    )
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * ticks → timecode 변환
+ */
+function ticksToTimecode(ticks) {
+  var seq = app.project.activeSequence
+  var fps = 30
+
+  if (seq && seq.timebase) {
+    var ticksPerSecond = 254016000000
+    fps = Math.round(ticksPerSecond / parseInt(seq.timebase))
+  }
+
+  var ticksNum = parseFloat(ticks)
+  var ticksPerFrame = 254016000000 / fps
+  var totalFrames = Math.round(ticksNum / ticksPerFrame)
+
+  var frames = totalFrames % fps
+  var totalSeconds = Math.floor(totalFrames / fps)
+  var seconds = totalSeconds % 60
+  var totalMinutes = Math.floor(totalSeconds / 60)
+  var minutes = totalMinutes % 60
+  var hours = Math.floor(totalMinutes / 60)
+
+  function pad(n, len) {
+    var s = String(n)
+    while (s.length < len) s = "0" + s
+    return s
+  }
+
+  return(
+    pad(hours, 2) +
+    ":" +
+    pad(minutes, 2) +
+    ":" +
+    pad(seconds, 2) +
+    ":" +
+    pad(frames, 2)
+  )
+}
+
+/**
+ * timecode → ticks 변환
+ */
+function timecodeToTicks(timecode) {
+  var seq = app.project.activeSequence
+  var fps = 30
+
+  if (seq && seq.timebase) {
+    var ticksPerSecond = 254016000000
+    fps = Math.round(ticksPerSecond / parseInt(seq.timebase))
+  }
+
+  var parts = timecode.split(":")
+  var hours = parseInt(parts[0], 10)
+  var minutes = parseInt(parts[1], 10)
+  var seconds = parseInt(parts[2], 10)
+  var frames = parseInt(parts[3], 10)
+
+  var totalFrames =
+    frames + seconds * fps + minutes * 60 * fps + hours * 3600 * fps
+  var ticksPerFrame = 254016000000 / fps
+
+  return String(Math.round(totalFrames * ticksPerFrame))
+}
+
+/**
+ * 모든 트랙에서 구간 삭제 (초 단위 - 호환용)
+ */
+function razorDeleteAllTracks(startSec, endSec) {
+  var startTicks = secondsToTicks(startSec)
+  var endTicks = secondsToTicks(endSec)
+  return razorDeleteAllTracksTicks(String(startTicks), String(endTicks))
+}
+
+/**
+ * 단어 복원 - 삭제된 구간에 클립 재삽입
+ * @param {string} startTicks - 원본 시작 ticks
+ * @param {string} endTicks - 원본 끝 ticks
+ * @param {string} timelineStartTicks - 타임라인 삽입 위치 ticks
+ */
+function restoreWord(startTicks, endTicks, timelineStartTicks) {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"success":false,"error":"시퀀스 없음"}'
+
+    // 비디오 트랙 0번에서 가장 가까운 클립의 projectItem 찾기
+    var videoTrack = seq.videoTracks[0]
+    var audioTrack = seq.audioTracks[0]
+
+    if (videoTrack.clips.numItems === 0) {
+      return '{"success":false,"error":"클립 없음"}'
+    }
+
+    // 삽입 위치에 가장 가까운 클립 찾기
+    var targetTicks = parseFloat(timelineStartTicks)
+    var closestClip = null
+    var closestDist = Infinity
+
+    for (var i = 0; i < videoTrack.clips.numItems; i++) {
+      var clip = videoTrack.clips[i]
+      var clipEnd = parseFloat(clip.end.ticks)
+      var dist = Math.abs(clipEnd - targetTicks)
+      if (dist < closestDist) {
+        closestDist = dist
+        closestClip = clip
+      }
+    }
+
+    if (!closestClip || !closestClip.projectItem) {
+      return '{"success":false,"error":"projectItem 없음"}'
+    }
+
+    var projectItem = closestClip.projectItem
+
+    // inPoint 계산 (원본 시작 ticks)
+    var inPointTicks = startTicks
+    var outPointTicks = endTicks
+
+    // 타임라인에 삽입
+    videoTrack.insertClip(projectItem, timelineStartTicks, 0, 0)
+
+    // 삽입된 클립 찾아서 inPoint/outPoint 설정
+    // (insertClip 후 가장 최근에 추가된 클립)
+    var newClip = videoTrack.clips[videoTrack.clips.numItems - 1]
+
+    // TODO: inPoint, outPoint 설정 (복잡할 수 있음)
+
+    return '{"success":true,"message":"복원 시도됨"}'
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * 단어 복원 - tick 기반 (소스 미디어 inPoint/outPoint로 인접 클립 찾기)
+ * @param {string} startTicks - 단어의 원본 start_at_tick
+ * @param {string} endTicks - 단어의 원본 end_at_tick
+ * @param {string} gapTicks - 누적 gap ticks (소스 미디어 offset)
+ */
+function restoreWordTicks(startTicks, endTicks, gapTicks) {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"success":false,"error":"시퀀스 없음"}'
+
+    // 소스 미디어 기준 inPoint/outPoint 계산
+    var newInPointTicks = parseFloat(startTicks) + parseFloat(gapTicks)
+    var newOutPointTicks = parseFloat(endTicks) + parseFloat(gapTicks)
+    var duration = newOutPointTicks - newInPointTicks
+
+    // 프레임 단위 오차 허용 (30fps 기준 1프레임 = 약 8467200000 ticks)
+    var frameTolerance = (254016000000 / 30) * 2 // 2프레임 오차
+
+    var result = {
+      leftFound: false,
+      rightFound: false,
+      restored: false,
+      debug: "",
+    }
+
+    // 비디오 트랙 0번만 처리 (기준 트랙)
+    var vTrack = seq.videoTracks[0]
+    var leftClip = null
+    var rightClip = null
+    var leftIdx = -1
+    var rightIdx = -1
+
+    for (var i = 0; i < vTrack.clips.numItems; i++) {
+      var clip = vTrack.clips[i]
+      var clipOutPoint = parseFloat(clip.outPoint.ticks)
+      var clipInPoint = parseFloat(clip.inPoint.ticks)
+
+      // 왼쪽 클립: 클립의 outPoint가 단어의 소스 inPoint와 같음
+      if (Math.abs(clipOutPoint - newInPointTicks) < frameTolerance) {
+        leftClip = clip
+        leftIdx = i
+        result.leftFound = true
+      }
+      // 오른쪽 클립: 클립의 inPoint가 단어의 소스 outPoint와 같음
+      if (Math.abs(clipInPoint - newOutPointTicks) < frameTolerance) {
+        rightClip = clip
+        rightIdx = i
+        result.rightFound = true
+      }
+    }
+
+    result.debug =
+      "newInPoint:" + newInPointTicks + ",newOutPoint:" + newOutPointTicks
+
+    // 양쪽 다 있으면: 왼쪽 클립 outPoint 확장 + 오른쪽 클립 삭제 (합치기)
+    if (leftClip && rightClip && leftClip !== rightClip) {
+      // 오른쪽 클립의 outPoint를 왼쪽 클립에 적용
+      leftClip.outPoint.ticks = rightClip.outPoint.ticks
+      // 오른쪽 클립 ripple 삭제
+      rightClip.remove(true, true)
+      result.restored = true
+
+      // 오디오 트랙도 동일하게 처리
+      for (var a = 0; a < seq.audioTracks.numTracks; a++) {
+        var aTrack = seq.audioTracks[a]
+        if (
+          aTrack.clips.numItems > leftIdx &&
+          aTrack.clips.numItems > rightIdx
+        ) {
+          var aLeftClip = aTrack.clips[leftIdx]
+          var aRightClip = aTrack.clips[rightIdx]
+          if (aLeftClip && aRightClip) {
+            aLeftClip.outPoint.ticks = aRightClip.outPoint.ticks
+            aRightClip.remove(true, true)
+          }
+        }
+      }
+    }
+    // 왼쪽만 있으면: outPoint 확장
+    else if (leftClip) {
+      leftClip.outPoint.ticks = newOutPointTicks.toString()
+      result.restored = true
+
+      for (var a2 = 0; a2 < seq.audioTracks.numTracks; a2++) {
+        var aTrack2 = seq.audioTracks[a2]
+        if (aTrack2.clips.numItems > leftIdx) {
+          aTrack2.clips[leftIdx].outPoint.ticks = newOutPointTicks.toString()
+        }
+      }
+    }
+    // 오른쪽만 있으면: inPoint 줄이기
+    else if (rightClip) {
+      rightClip.inPoint.ticks = newInPointTicks.toString()
+      result.restored = true
+
+      for (var a3 = 0; a3 < seq.audioTracks.numTracks; a3++) {
+        var aTrack3 = seq.audioTracks[a3]
+        if (aTrack3.clips.numItems > rightIdx) {
+          aTrack3.clips[rightIdx].inPoint.ticks = newInPointTicks.toString()
+        }
+      }
+    }
+
+    return(
+      '{"success":' +
+      result.restored +
+      ',"leftFound":' +
+      result.leftFound +
+      ',"rightFound":' +
+      result.rightFound +
+      ',"debug":"' +
+      result.debug +
+      '"}'
+    )
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * 타임라인 위치 기준으로 단어 삭제 (QE razor 사용)
+ * @param {string} timelineStartTicks - 타임라인 시작 ticks
+ * @param {string} timelineEndTicks - 타임라인 끝 ticks
+ */
+function deleteWordByTimelineTicks(timelineStartTicks, timelineEndTicks) {
+  try {
+    app.enableQE()
+
+    var seq = app.project.activeSequence
+    if (!seq) return '{"success":false,"error":"시퀀스 없음"}'
+
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) return '{"success":false,"error":"QE 시퀀스 없음"}'
+
+    var timelineStart = parseFloat(timelineStartTicks)
+    var timelineEnd = parseFloat(timelineEndTicks)
+
+    // ticks → timecode 변환
+    var startTC = ticksToTimecode(timelineStartTicks)
+    var endTC = ticksToTimecode(timelineEndTicks)
+
+    // 모든 트랙에 razor
+    razorAllTracks(startTC)
+    razorAllTracks(endTC)
+
+    // razor 후 생성된 ticks 값 (정확한 프레임 경계)
+    var razorStartTicks = timecodeToTicks(startTC)
+    var razorEndTicks = timecodeToTicks(endTC)
+    var razorStart = parseFloat(razorStartTicks)
+    var razorEnd = parseFloat(razorEndTicks)
+
+    // 삭제 후 저장할 실제 outPoint/inPoint
+    var actualLeftOutPoint = ""
+    var actualRightInPoint = ""
+
+    var deletedCount = 0
+
+    // 비디오 트랙 처리
+    for (var v = 0; v < seq.videoTracks.numTracks; v++) {
+      var vt = seq.videoTracks[v]
+      for (var j = vt.clips.numItems - 1; j >= 0; j--) {
+        var c = vt.clips[j]
+        var cStart = parseFloat(c.start.ticks)
+        var cEnd = parseFloat(c.end.ticks)
+
+        // 타임라인 위치로 중간 클립 찾기 (razor 후 생성된 클립)
+        if (
+          cStart >= razorStart - 1000000000 &&
+          cEnd <= razorEnd + 1000000000
+        ) {
+          // 삭제 전에 좌우 클립 정보 저장 (트랙 0번만)
+          if (v === 0) {
+            if (j > 0) {
+              var leftClip = vt.clips[j - 1]
+              actualLeftOutPoint = leftClip.outPoint.ticks
+            }
+            if (j + 1 < vt.clips.numItems) {
+              var rightClip = vt.clips[j + 1]
+              actualRightInPoint = rightClip.inPoint.ticks
+            }
+          }
+
+          c.remove(true, true)
+          deletedCount++
+        }
+      }
+    }
+
+    // 오디오 트랙 처리
+    for (var a = 0; a < seq.audioTracks.numTracks; a++) {
+      var at = seq.audioTracks[a]
+      for (var k = at.clips.numItems - 1; k >= 0; k--) {
+        var ac = at.clips[k]
+        var acStart = parseFloat(ac.start.ticks)
+        var acEnd = parseFloat(ac.end.ticks)
+
+        if (
+          acStart >= razorStart - 1000000000 &&
+          acEnd <= razorEnd + 1000000000
+        ) {
+          ac.remove(true, true)
+          deletedCount++
+        }
+      }
+    }
+
+    return(
+      '{"success":true,"deletedClips":' +
+      deletedCount +
+      ',"actualLeftOutPoint":"' +
+      actualLeftOutPoint +
+      '","actualRightInPoint":"' +
+      actualRightInPoint +
+      '"}'
+    )
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * 소스 미디어 시간 기준으로 단어 삭제 (QE razor 사용 + 실제 razor 지점 반환) - 레거시
+ * @param {string} sourceInPointTicks - 소스 미디어 시작 ticks (단어 start + gap)
+ * @param {string} sourceOutPointTicks - 소스 미디어 끝 ticks (단어 end + gap)
+ */
+function deleteWordBySourceTicks(sourceInPointTicks, sourceOutPointTicks) {
+  try {
+    app.enableQE()
+
+    var seq = app.project.activeSequence
+    if (!seq) return '{"success":false,"error":"시퀀스 없음"}'
+
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) return '{"success":false,"error":"QE 시퀀스 없음"}'
+
+    var sourceIn = parseFloat(sourceInPointTicks)
+    var sourceOut = parseFloat(sourceOutPointTicks)
+
+    // 비디오 트랙 0번에서 해당 소스 위치를 포함하는 클립 찾기
+    var vTrack = seq.videoTracks[0]
+    var targetClip = null
+
+    for (var i = 0; i < vTrack.clips.numItems; i++) {
+      var clip = vTrack.clips[i]
+      var clipInPoint = parseFloat(clip.inPoint.ticks)
+      var clipOutPoint = parseFloat(clip.outPoint.ticks)
+
+      // 조건 완화: 단어의 일부라도 클립 안에 있으면 찾기
+      // (sourceIn이 삭제 구간에 있을 수 있으므로, sourceOut만 클립 안에 있어도 OK)
+      if (clipInPoint <= sourceOut && clipOutPoint >= sourceOut) {
+        targetClip = clip
+        // sourceIn을 클립의 inPoint로 조정 (삭제 시작점)
+        if (sourceIn < clipInPoint) {
+          sourceIn = clipInPoint
+        }
+        break
+      }
+    }
+
+    if (!targetClip) {
+      // 디버그: 현재 클립들의 inPoint/outPoint 출력
+      var clipRanges = []
+      for (var d = 0; d < vTrack.clips.numItems; d++) {
+        var dc = vTrack.clips[d]
+        clipRanges.push(
+          "c" + d + ":" + dc.inPoint.ticks + "-" + dc.outPoint.ticks,
+        )
+      }
+      return(
+        '{"success":false,"error":"해당 소스 위치를 포함하는 클립 없음 (sourceIn:' +
+        sourceIn +
+        " sourceOut:" +
+        sourceOut +
+        ')","clips":"' +
+        clipRanges.join(" | ") +
+        '"}'
+      )
+    }
+
+    // 소스 위치를 타임라인 위치로 변환
+    var clipStart = parseFloat(targetClip.start.ticks)
+    var clipInPoint = parseFloat(targetClip.inPoint.ticks)
+
+    var timelineStartTicks = clipStart + (sourceIn - clipInPoint)
+    var timelineEndTicks = clipStart + (sourceOut - clipInPoint)
+
+    // ticks → timecode 변환
+    var startTC = ticksToTimecode(timelineStartTicks.toString())
+    var endTC = ticksToTimecode(timelineEndTicks.toString())
+
+    // 모든 트랙에 razor
+    razorAllTracks(startTC)
+    razorAllTracks(endTC)
+
+    // razor 후 생성된 ticks 값 (정확한 프레임 경계)
+    var razorStartTicks = timecodeToTicks(startTC)
+    var razorEndTicks = timecodeToTicks(endTC)
+    var razorStart = parseFloat(razorStartTicks)
+    var razorEnd = parseFloat(razorEndTicks)
+
+    // 삭제 후 저장할 실제 outPoint/inPoint (비디오 트랙 0번 기준)
+    var actualLeftOutPoint = ""
+    var actualRightInPoint = ""
+
+    var deletedCount = 0
+
+    // 비디오 트랙 처리
+    for (var v = 0; v < seq.videoTracks.numTracks; v++) {
+      var vt = seq.videoTracks[v]
+      for (var j = vt.clips.numItems - 1; j >= 0; j--) {
+        var c = vt.clips[j]
+        var cStart = parseFloat(c.start.ticks)
+        var cEnd = parseFloat(c.end.ticks)
+
+        if (
+          cStart >= razorStart - 1000000000 &&
+          cEnd <= razorEnd + 1000000000
+        ) {
+          // 삭제 전에 왼쪽/오른쪽 클립의 outPoint/inPoint 저장 (트랙 0번만)
+          if (v === 0) {
+            // 왼쪽 클립 (삭제할 클립 바로 앞)
+            if (j > 0) {
+              var leftClip = vt.clips[j - 1]
+              actualLeftOutPoint = leftClip.outPoint.ticks
+            }
+            // 오른쪽 클립 (삭제할 클립 바로 뒤) - 삭제 후 인덱스가 바뀌므로 j 사용
+            // 삭제 전에 j+1 클립의 inPoint 저장
+            if (j + 1 < vt.clips.numItems) {
+              var rightClip = vt.clips[j + 1]
+              actualRightInPoint = rightClip.inPoint.ticks
+            }
+          }
+
+          c.remove(true, true)
+          deletedCount++
+        }
+      }
+    }
+
+    // 오디오 트랙 처리
+    for (var a = 0; a < seq.audioTracks.numTracks; a++) {
+      var at = seq.audioTracks[a]
+      for (var k = at.clips.numItems - 1; k >= 0; k--) {
+        var ac = at.clips[k]
+        var acStart = parseFloat(ac.start.ticks)
+        var acEnd = parseFloat(ac.end.ticks)
+
+        if (
+          acStart >= razorStart - 1000000000 &&
+          acEnd <= razorEnd + 1000000000
+        ) {
+          ac.remove(true, true)
+          deletedCount++
+        }
+      }
+    }
+
+    return(
+      '{"success":true,"deletedClips":' +
+      deletedCount +
+      ',"actualLeftOutPoint":"' +
+      actualLeftOutPoint +
+      '","actualRightInPoint":"' +
+      actualRightInPoint +
+      '"}'
+    )
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * 단어 복원 - 삭제 시 저장된 실제 ticks 사용 (정확한 매칭)
+ * @param {string} leftOutPoint - 왼쪽 클립의 outPoint ticks
+ * @param {string} rightInPoint - 오른쪽 클립의 inPoint ticks
+ */
+function restoreWordByActualTicks(leftOutPoint, rightInPoint) {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"success":false,"error":"시퀀스 없음"}'
+
+    // ticks를 문자열로 통일 (비교 안정성)
+    leftOutPoint = leftOutPoint ? String(leftOutPoint) : null
+    rightInPoint = rightInPoint ? String(rightInPoint) : null
+
+    var result = {
+      leftFound: false,
+      rightFound: false,
+      restored: false,
+      debug: "",
+    }
+
+    var vTrack = seq.videoTracks[0]
+    var leftClip = null
+    var rightClip = null
+    var leftIdx = -1
+    var rightIdx = -1
+
+    result.debug += "L:" + leftOutPoint + " R:" + rightInPoint + " | "
+
+    for (var i = 0; i < vTrack.clips.numItems; i++) {
+      var clip = vTrack.clips[i]
+      var clipOut = String(clip.outPoint.ticks)
+      var clipIn = String(clip.inPoint.ticks)
+
+      if (i < 3) {
+        result.debug += "c" + i + "out:" + clipOut + " in:" + clipIn + " | "
+      }
+
+      if (leftOutPoint && clipOut === leftOutPoint) {
+        leftClip = clip
+        leftIdx = i
+        result.leftFound = true
+      }
+      if (rightInPoint && clipIn === rightInPoint) {
+        rightClip = clip
+        rightIdx = i
+        result.rightFound = true
+      }
+    }
+
+    result.debug += "idx L:" + leftIdx + " R:" + rightIdx
+
+    // 양쪽 다 찾은 경우: 오른쪽 삭제 → 왼쪽 end/outPoint 확장
+    if (leftClip && rightClip && leftIdx !== rightIdx) {
+      if (leftIdx + 1 !== rightIdx) {
+        return(
+          '{"success":false,"error":"클립이 연속되지 않음 (left:' +
+          leftIdx +
+          " right:" +
+          rightIdx +
+          ')"}'
+        )
+      }
+
+      // 모든 비디오 트랙 처리
+      for (var v = 0; v < seq.videoTracks.numTracks; v++) {
+        var vt = seq.videoTracks[v]
+        if (leftIdx >= vt.clips.numItems || rightIdx >= vt.clips.numItems)
+          continue
+
+        var vLeftClip = vt.clips[leftIdx]
+        var vRightClip = vt.clips[rightIdx]
+        if (!vLeftClip || !vRightClip) continue
+
+        var vTargetEndTicks = vRightClip.end.ticks
+        var vTargetOutTicks = vRightClip.outPoint.ticks
+
+        // 오른쪽 클립 삭제
+        vRightClip.remove(false, true)
+
+        // end 확장 (기존 Time 객체 수정 후 재대입)
+        var vNewEnd = vLeftClip.end
+        vNewEnd.ticks = String(vTargetEndTicks)
+        vLeftClip.end = vNewEnd
+
+        // outPoint 확장
+        var vNewOut = vLeftClip.outPoint
+        vNewOut.ticks = String(vTargetOutTicks)
+        vLeftClip.outPoint = vNewOut
+      }
+
+      result.restored = true
+
+      // 오디오 트랙도 동일하게 처리
+      processAudioMerge(seq, leftIdx, rightIdx)
+    }
+    // 왼쪽만 있는 경우: 뒤 클립들 밀기 + 왼쪽 클립 확장
+    else if (leftClip && rightInPoint) {
+      // 삭제된 구간 duration 계산
+      var deletedDuration = parseFloat(rightInPoint) - parseFloat(leftOutPoint)
+
+      // 1. 왼쪽 클립 뒤에 있는 모든 클립들을 뒤로 밀기 (ripple)
+      rippleClipsRight(seq, leftIdx + 1, deletedDuration)
+
+      // 2. 왼쪽 클립 확장
+      var newEnd = leftClip.end
+      var newEndTicks = parseFloat(newEnd.ticks) + deletedDuration
+      newEnd.ticks = String(newEndTicks)
+      leftClip.end = newEnd
+
+      var newOut = leftClip.outPoint
+      newOut.ticks = rightInPoint
+      leftClip.outPoint = newOut
+
+      result.restored = true
+    }
+    // 오른쪽만 있는 경우: 오른쪽 클립 앞으로 확장
+    else if (rightClip && leftOutPoint) {
+      // 삭제된 구간 duration 계산
+      var deletedDuration2 = parseFloat(rightInPoint) - parseFloat(leftOutPoint)
+
+      // 오른쪽 클립 앞으로 확장 (start + inPoint)
+      var newStart = rightClip.start
+      var newStartTicks = parseFloat(newStart.ticks) - deletedDuration2
+      newStart.ticks = String(newStartTicks)
+      rightClip.start = newStart
+
+      var newIn = rightClip.inPoint
+      newIn.ticks = leftOutPoint
+      rightClip.inPoint = newIn
+
+      result.restored = true
+
+      // 오디오도 동일하게
+      rippleAudioClipLeft(seq, rightIdx, deletedDuration2, leftOutPoint)
+    }
+    // 둘 다 없는 경우: 새 클립 삽입
+    else if (leftOutPoint && rightInPoint) {
+      result.debug += "bothNotFound-insertNew "
+
+      // 삭제된 구간 duration
+      var insertDuration = parseFloat(rightInPoint) - parseFloat(leftOutPoint)
+
+      // projectItem 찾기 (첫 번째 클립에서 가져오기)
+      if (vTrack.clips.numItems > 0) {
+        var sampleClip = vTrack.clips[0]
+        var projectItem = sampleClip.projectItem
+
+        if (projectItem) {
+          // 삽입 위치 찾기: leftOutPoint를 포함하는 클립의 end 위치
+          // 또는 가장 가까운 클립 뒤
+          var insertPosition = "0"
+          for (var ip = 0; ip < vTrack.clips.numItems; ip++) {
+            var ipClip = vTrack.clips[ip]
+            // outPoint가 leftOutPoint보다 작거나 같은 클립 찾기
+            if (parseFloat(ipClip.outPoint.ticks) <= parseFloat(leftOutPoint)) {
+              insertPosition = ipClip.end.ticks
+            }
+          }
+
+          // 뒤 클립들 밀기
+          var insertIdx = 0
+          for (var ii = 0; ii < vTrack.clips.numItems; ii++) {
+            if (
+              parseFloat(vTrack.clips[ii].start.ticks) >=
+              parseFloat(insertPosition)
+            ) {
+              insertIdx = ii
+              break
+            }
+            insertIdx = ii + 1
+          }
+          rippleClipsRight(seq, insertIdx, insertDuration)
+
+          // 새 클립 삽입
+          vTrack.overwriteClip(projectItem, insertPosition)
+
+          // 삽입된 클립 찾아서 inPoint/outPoint 설정
+          for (var nc = 0; nc < vTrack.clips.numItems; nc++) {
+            var newClip = vTrack.clips[nc]
+            if (newClip.start.ticks === insertPosition) {
+              // inPoint 설정 (Time 객체 방식)
+              var newIn = newClip.inPoint
+              newIn.ticks = leftOutPoint
+              newClip.inPoint = newIn
+
+              // outPoint 설정
+              var newOut = newClip.outPoint
+              newOut.ticks = rightInPoint
+              newClip.outPoint = newOut
+
+              // end 설정 (duration에 맞게)
+              var newEnd = newClip.end
+              newEnd.ticks = String(parseFloat(insertPosition) + insertDuration)
+              newClip.end = newEnd
+
+              result.restored = true
+              break
+            }
+          }
+
+          // 오디오도 동일하게
+          insertAudioClip(
+            seq,
+            insertPosition,
+            insertDuration,
+            leftOutPoint,
+            rightInPoint,
+          )
+        }
+      }
+    }
+
+    return(
+      '{"success":' +
+      result.restored +
+      ',"leftFound":' +
+      result.leftFound +
+      ',"rightFound":' +
+      result.rightFound +
+      ',"debug":"' +
+      result.debug +
+      '"}'
+    )
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * 오디오 트랙 병합 처리 (Time 객체 수정 후 재대입 방식)
+ */
+function processAudioMerge(seq, leftIdx, rightIdx) {
+  for (var a = 0; a < seq.audioTracks.numTracks; a++) {
+    var aTrack = seq.audioTracks[a]
+
+    if (rightIdx >= aTrack.clips.numItems) continue
+
+    var aLeftClip = aTrack.clips[leftIdx]
+    var aRightClip = aTrack.clips[rightIdx]
+
+    if (!aLeftClip || !aRightClip) continue
+
+    var aTargetEndTicks = aRightClip.end.ticks
+    var aTargetOutTicks = aRightClip.outPoint.ticks
+
+    // 삭제
+    aRightClip.remove(false, true)
+
+    // end 확장 (기존 Time 객체 수정 후 재대입)
+    var aNewEnd = aLeftClip.end
+    aNewEnd.ticks = String(aTargetEndTicks)
+    aLeftClip.end = aNewEnd
+
+    // outPoint 확장
+    var aNewOut = aLeftClip.outPoint
+    aNewOut.ticks = String(aTargetOutTicks)
+    aLeftClip.outPoint = aNewOut
+  }
+}
+
+/**
+ * 모든 트랙에서 특정 인덱스 이후 클립들을 오른쪽으로 밀기
+ */
+function rippleClipsRight(seq, fromIdx, deltaTicks) {
+  // 비디오 트랙
+  for (var v = 0; v < seq.videoTracks.numTracks; v++) {
+    var vt = seq.videoTracks[v]
+    for (var i = fromIdx; i < vt.clips.numItems; i++) {
+      var clip = vt.clips[i]
+      var newStart = clip.start
+      var newStartTicks = parseFloat(newStart.ticks) + deltaTicks
+      newStart.ticks = String(newStartTicks)
+      clip.start = newStart
+    }
+  }
+
+  // 오디오 트랙
+  for (var a = 0; a < seq.audioTracks.numTracks; a++) {
+    var at = seq.audioTracks[a]
+    for (var j = fromIdx; j < at.clips.numItems; j++) {
+      var aClip = at.clips[j]
+      var aNewStart = aClip.start
+      var aNewStartTicks = parseFloat(aNewStart.ticks) + deltaTicks
+      aNewStart.ticks = String(aNewStartTicks)
+      aClip.start = aNewStart
+    }
+  }
+}
+
+/**
+ * 오디오 클립 새로 삽입 (둘 다 없는 경우)
+ */
+function insertAudioClip(
+  seq,
+  insertPosition,
+  insertDuration,
+  targetInPoint,
+  targetOutPoint,
+) {
+  for (var a = 0; a < seq.audioTracks.numTracks; a++) {
+    var aTrack = seq.audioTracks[a]
+    if (aTrack.clips.numItems === 0) continue
+
+    var projectItem = aTrack.clips[0].projectItem
+    if (!projectItem) continue
+
+    // 삽입 인덱스 찾기
+    var insertIdx = 0
+    for (var i = 0; i < aTrack.clips.numItems; i++) {
+      if (
+        parseFloat(aTrack.clips[i].start.ticks) >= parseFloat(insertPosition)
+      ) {
+        insertIdx = i
+        break
+      }
+      insertIdx = i + 1
+    }
+
+    // 새 클립 삽입
+    aTrack.overwriteClip(projectItem, insertPosition)
+
+    // 삽입된 클립 찾아서 설정
+    for (var nc = 0; nc < aTrack.clips.numItems; nc++) {
+      var newClip = aTrack.clips[nc]
+      if (newClip.start.ticks === insertPosition) {
+        var newIn = newClip.inPoint
+        newIn.ticks = String(targetInPoint)
+        newClip.inPoint = newIn
+
+        var newOut = newClip.outPoint
+        newOut.ticks = String(targetOutPoint)
+        newClip.outPoint = newOut
+
+        var newEnd = newClip.end
+        newEnd.ticks = String(parseFloat(insertPosition) + insertDuration)
+        newClip.end = newEnd
+        break
+      }
+    }
+  }
+}
+
+/**
+ * 오디오 클립 왼쪽으로 확장 (start + inPoint)
+ */
+function rippleAudioClipLeft(seq, clipIdx, deltaTicks, targetInPoint) {
+  for (var a = 0; a < seq.audioTracks.numTracks; a++) {
+    var aTrack = seq.audioTracks[a]
+    if (clipIdx < aTrack.clips.numItems) {
+      var clip = aTrack.clips[clipIdx]
+
+      // start 앞으로 이동
+      var newStart = clip.start
+      var newStartTicks = parseFloat(newStart.ticks) - deltaTicks
+      newStart.ticks = String(newStartTicks)
+      clip.start = newStart
+
+      // inPoint 앞으로 확장
+      var newIn = clip.inPoint
+      newIn.ticks = String(targetInPoint)
+      clip.inPoint = newIn
+    }
+  }
+}
+
+/**
+ * 오디오 클립 확장 (end + outPoint)
+ */
+function extendAudioClip(seq, clipIdx, deletedDuration, targetOutPoint) {
+  for (var a = 0; a < seq.audioTracks.numTracks; a++) {
+    var aTrack = seq.audioTracks[a]
+    if (clipIdx < aTrack.clips.numItems) {
+      var clip = aTrack.clips[clipIdx]
+
+      // end 확장
+      var newEnd = clip.end
+      var newEndTicks = parseFloat(newEnd.ticks) + deletedDuration
+      newEnd.ticks = String(newEndTicks)
+      clip.end = newEnd
+
+      // outPoint 확장
+      var newOut = clip.outPoint
+      newOut.ticks = String(targetOutPoint)
+      clip.outPoint = newOut
+    }
+  }
+}
+
+/**
+ * 오디오 클립 앞으로 확장 (start + inPoint)
+ */
+function shrinkAudioClip(seq, clipIdx, deletedDuration, targetInPoint) {
+  for (var a = 0; a < seq.audioTracks.numTracks; a++) {
+    var aTrack = seq.audioTracks[a]
+    if (clipIdx < aTrack.clips.numItems) {
+      var clip = aTrack.clips[clipIdx]
+
+      // start 앞으로 이동
+      var newStart = clip.start
+      var newStartTicks = parseFloat(newStart.ticks) - deletedDuration
+      newStart.ticks = String(newStartTicks)
+      clip.start = newStart
+
+      // inPoint 앞으로 확장
+      var newIn = clip.inPoint
+      newIn.ticks = String(targetInPoint)
+      clip.inPoint = newIn
+    }
+  }
+}
+
+/**
+ * 단어 복원 - 소스 미디어 ticks로 클립 찾기 (레거시)
+ * @param {string} sourceInPointTicks - 왼쪽 클립의 outPoint (razor 지점)
+ * @param {string} sourceOutPointTicks - 오른쪽 클립의 inPoint (razor 지점)
+ */
+function restoreWordByRazorTicks(razorInPointTicks, razorOutPointTicks) {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"success":false,"error":"시퀀스 없음"}'
+
+    var result = {
+      leftFound: false,
+      rightFound: false,
+      restored: false,
+      debug: "",
+    }
+
+    var targetIn = parseFloat(razorInPointTicks)
+    var targetOut = parseFloat(razorOutPointTicks)
+
+    // 프레임 단위 오차 허용 (약 2프레임)
+    var tolerance = (254016000000 / 30) * 2 // ~16934400000
+
+    // 비디오 트랙 0번에서 찾기
+    var vTrack = seq.videoTracks[0]
+    var leftClip = null
+    var rightClip = null
+    var leftIdx = -1
+    var rightIdx = -1
+
+    // 먼저 왼쪽 클립 찾기 (outPoint가 targetIn과 유사)
+    for (var i = 0; i < vTrack.clips.numItems; i++) {
+      var clip = vTrack.clips[i]
+      var clipOut = parseFloat(clip.outPoint.ticks)
+
+      if (Math.abs(clipOut - targetIn) < tolerance) {
+        leftClip = clip
+        leftIdx = i
+        result.leftFound = true
+        result.debug += "leftOut:" + clip.outPoint.ticks + " "
+        break // 첫 번째 매칭만
+      }
+    }
+
+    // 오른쪽 클립: 왼쪽 클립의 end 위치에서 시작하는 클립 (타임라인 기준)
+    if (leftClip) {
+      var leftEnd = parseFloat(leftClip.end.ticks)
+
+      for (var j = 0; j < vTrack.clips.numItems; j++) {
+        var c = vTrack.clips[j]
+        var cStart = parseFloat(c.start.ticks)
+
+        // 타임라인에서 왼쪽 클립 end와 같은 위치에서 시작하는 클립
+        if (Math.abs(cStart - leftEnd) < tolerance && c !== leftClip) {
+          rightClip = c
+          rightIdx = j
+          result.rightFound = true
+          result.debug += "rightIn:" + c.inPoint.ticks + " "
+          break
+        }
+      }
+    }
+
+    // 양쪽 다 있으면: 왼쪽 클립 outPoint 확장 + 오른쪽 클립 삭제 (합치기)
+    if (leftClip && rightClip && leftClip !== rightClip) {
+      leftClip.outPoint.ticks = rightClip.outPoint.ticks
+      rightClip.remove(true, true)
+      result.restored = true
+
+      // 오디오 트랙도 동일하게 처리
+      for (var a = 0; a < seq.audioTracks.numTracks; a++) {
+        var aTrack = seq.audioTracks[a]
+        var aLeftClip = null
+        var aRightClip = null
+
+        for (var j = 0; j < aTrack.clips.numItems; j++) {
+          var aClip = aTrack.clips[j]
+          if (aClip.outPoint.ticks === razorInPointTicks) aLeftClip = aClip
+          if (aClip.inPoint.ticks === razorOutPointTicks) aRightClip = aClip
+        }
+
+        if (aLeftClip && aRightClip && aLeftClip !== aRightClip) {
+          aLeftClip.outPoint.ticks = aRightClip.outPoint.ticks
+          aRightClip.remove(true, true)
+        }
+      }
+    }
+    // 왼쪽만 있으면: outPoint 확장
+    else if (leftClip) {
+      leftClip.outPoint.ticks = razorOutPointTicks
+      result.restored = true
+
+      for (var a2 = 0; a2 < seq.audioTracks.numTracks; a2++) {
+        var aTrack2 = seq.audioTracks[a2]
+        for (var j2 = 0; j2 < aTrack2.clips.numItems; j2++) {
+          if (aTrack2.clips[j2].outPoint.ticks === razorInPointTicks) {
+            aTrack2.clips[j2].outPoint.ticks = razorOutPointTicks
+            break
+          }
+        }
+      }
+    }
+    // 오른쪽만 있으면: inPoint 줄이기
+    else if (rightClip) {
+      rightClip.inPoint.ticks = razorInPointTicks
+      result.restored = true
+
+      for (var a3 = 0; a3 < seq.audioTracks.numTracks; a3++) {
+        var aTrack3 = seq.audioTracks[a3]
+        for (var j3 = 0; j3 < aTrack3.clips.numItems; j3++) {
+          if (aTrack3.clips[j3].inPoint.ticks === razorOutPointTicks) {
+            aTrack3.clips[j3].inPoint.ticks = razorInPointTicks
+            break
+          }
+        }
+      }
+    }
+
+    return(
+      '{"success":' +
+      result.restored +
+      ',"leftFound":' +
+      result.leftFound +
+      ',"rightFound":' +
+      result.rightFound +
+      ',"debug":"' +
+      result.debug +
+      '"}'
+    )
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * projectItem의 메서드 확인
+ */
+function inspectProjectItem() {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"error":"시퀀스 없음"}'
+
+    var track = seq.videoTracks[0]
+    var clip = track.clips[0]
+    if (!clip || !clip.projectItem) return '{"error":"클립/projectItem 없음"}'
+
+    var pi = clip.projectItem
+    var methods = []
+
+    if (typeof pi.setInPoint === "function") methods.push("setInPoint")
+    if (typeof pi.setOutPoint === "function") methods.push("setOutPoint")
+    if (typeof pi.getInPoint === "function") methods.push("getInPoint")
+    if (typeof pi.getOutPoint === "function") methods.push("getOutPoint")
+    if (typeof pi.setOverridePixelAspectRatio === "function")
+      methods.push("setOverridePixelAspectRatio")
+    if (typeof pi.clearInPoint === "function") methods.push("clearInPoint")
+    if (typeof pi.clearOutPoint === "function") methods.push("clearOutPoint")
+    if (typeof pi.setScaleToFrameSize === "function")
+      methods.push("setScaleToFrameSize")
+
+    var hasInPoint = pi.inPoint !== undefined
+    var hasOutPoint = pi.outPoint !== undefined
+
+    return(
+      '{"methods":["' +
+      methods.join('","') +
+      '"],"hasInPoint":' +
+      hasInPoint +
+      ',"hasOutPoint":' +
+      hasOutPoint +
+      "}"
+    )
+  } catch (e) {
+    return '{"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+  }
+}
+
+/**
+ * DOM 트랙의 메서드 확인 (디버깅용)
+ */
+function inspectDOMTrack() {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"error":"시퀀스 없음"}'
+
+    var track = seq.videoTracks[0]
+    if (!track) return '{"error":"트랙 없음"}'
+
+    var methods = []
+    if (typeof track.insertClip === "function") methods.push("insertClip")
+    if (typeof track.overwriteClip === "function") methods.push("overwriteClip")
+    if (typeof track.setMute === "function") methods.push("setMute")
+    if (typeof track.isMuted === "function") methods.push("isMuted")
+    if (typeof track.setLocked === "function") methods.push("setLocked")
+    if (typeof track.isLocked === "function") methods.push("isLocked")
+
+    var props = []
+    props.push("numClips:" + track.clips.numItems)
+    if (track.name) props.push("name:" + track.name)
+
+    return(
+      '{"methods":["' +
+      methods.join('","') +
+      '"],"props":["' +
+      props.join('","') +
+      '"]}'
+    )
+  } catch (e) {
+    return '{"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+  }
+}
+
+/**
+ * QE 트랙의 메서드 확인 (디버깅용)
+ */
+function inspectQETrack() {
+  try {
+    app.enableQE()
+
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) return '{"error":"QE 시퀀스 없음"}'
+
+    var qeTrack = qeSeq.getVideoTrackAt(0)
+    if (!qeTrack) return '{"error":"QE 트랙 없음"}'
+
+    var methods = []
+    if (typeof qeTrack.razor === "function") methods.push("razor")
+    if (typeof qeTrack.setInPoint === "function") methods.push("setInPoint")
+    if (typeof qeTrack.setOutPoint === "function") methods.push("setOutPoint")
+    if (typeof qeTrack.addTransition === "function")
+      methods.push("addTransition")
+    if (typeof qeTrack.getItemAt === "function") methods.push("getItemAt")
+    if (typeof qeTrack.numItems !== undefined)
+      methods.push("numItems:" + qeTrack.numItems)
+    if (typeof qeTrack.rippleDelete === "function") methods.push("rippleDelete")
+    if (typeof qeTrack.overwriteClip === "function")
+      methods.push("overwriteClip")
+    if (typeof qeTrack.insertClip === "function") methods.push("insertClip")
+
+    return '{"trackMethods":["' + methods.join('","') + '"]}'
+  } catch (e) {
+    return '{"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+  }
+}
+
+/**
+ * QE 클립의 주요 메서드 확인 (디버깅용)
+ */
+function inspectQEClip(clipIndex) {
+  try {
+    app.enableQE()
+
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) return '{"error":"QE 시퀀스 없음"}'
+
+    var qeTrack = qeSeq.getVideoTrackAt(0)
+    if (!qeTrack) return '{"error":"QE 트랙 없음"}'
+
+    clipIndex = clipIndex || 0
+    var qeClip = qeTrack.getItemAt(clipIndex)
+
+    if (!qeClip) return '{"error":"QE 클립 없음 (index:' + clipIndex + ')"}'
+
+    // 알려진 메서드들 체크
+    var methods = []
+    if (typeof qeClip.setInPoint === "function") methods.push("setInPoint")
+    if (typeof qeClip.setOutPoint === "function") methods.push("setOutPoint")
+    if (typeof qeClip.getInPoint === "function") methods.push("getInPoint")
+    if (typeof qeClip.getOutPoint === "function") methods.push("getOutPoint")
+    if (typeof qeClip.setStart === "function") methods.push("setStart")
+    if (typeof qeClip.setEnd === "function") methods.push("setEnd")
+    if (typeof qeClip.getStart === "function") methods.push("getStart")
+    if (typeof qeClip.getEnd === "function") methods.push("getEnd")
+    if (typeof qeClip.remove === "function") methods.push("remove")
+    if (typeof qeClip.move === "function") methods.push("move")
+    if (typeof qeClip.setName === "function") methods.push("setName")
+    if (typeof qeClip.getName === "function") methods.push("getName")
+
+    // 속성 체크
+    var hasName = qeClip.name !== undefined
+    var hasStart = qeClip.start !== undefined
+    var hasEnd = qeClip.end !== undefined
+
+    return(
+      '{"methods":["' +
+      methods.join('","') +
+      '"],"hasName":' +
+      hasName +
+      ',"hasStart":' +
+      hasStart +
+      ',"hasEnd":' +
+      hasEnd +
+      "}"
+    )
+  } catch (e) {
+    return '{"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+  }
+}
+
+/**
+ * DOM 클립의 주요 메서드 확인 (디버깅용)
+ */
+function inspectDOMClip(clipIndex) {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"error":"시퀀스 없음"}'
+
+    var track = seq.videoTracks[0]
+    clipIndex = clipIndex || 0
+    var clip = track.clips[clipIndex]
+
+    if (!clip) return '{"error":"클립 없음 (index:' + clipIndex + ')"}'
+
+    // 알려진 메서드들 체크
+    var methods = []
+    if (typeof clip.setInPoint === "function") methods.push("setInPoint")
+    if (typeof clip.setOutPoint === "function") methods.push("setOutPoint")
+    if (typeof clip.getInPoint === "function") methods.push("getInPoint")
+    if (typeof clip.getOutPoint === "function") methods.push("getOutPoint")
+    if (typeof clip.remove === "function") methods.push("remove")
+    if (typeof clip.move === "function") methods.push("move")
+    if (typeof clip.setSpeed === "function") methods.push("setSpeed")
+
+    // 속성들
+    var props = []
+    props.push("start.ticks:" + clip.start.ticks)
+    props.push("end.ticks:" + clip.end.ticks)
+    props.push("inPoint.ticks:" + clip.inPoint.ticks)
+    props.push("outPoint.ticks:" + clip.outPoint.ticks)
+    props.push("duration.ticks:" + clip.duration.ticks)
+    if (clip.name) props.push("name:" + clip.name)
+
+    return(
+      '{"methods":["' +
+      methods.join('","') +
+      '"],"props":["' +
+      props.join('","') +
+      '"]}'
+    )
+  } catch (e) {
+    return '{"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+  }
+}
+
+/**
+ * 비디오 트랙 0번 클립들의 inPoint/outPoint 디버그 출력
+ */
+function debugClipPoints() {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"error":"시퀀스 없음"}'
+
+    var vTrack = seq.videoTracks[0]
+    var clips = []
+
+    for (var i = 0; i < vTrack.clips.numItems; i++) {
+      var clip = vTrack.clips[i]
+      clips.push({
+        idx: i,
+        name: clip.name || "",
+        // 타임라인 위치
+        startTicks: clip.start.ticks,
+        endTicks: clip.end.ticks,
+        // 소스 미디어 위치
+        inPointTicks: clip.inPoint.ticks,
+        outPointTicks: clip.outPoint.ticks,
+      })
+    }
+
+    // JSON 직접 생성
+    var result = '{"clips":['
+    for (var j = 0; j < clips.length; j++) {
+      if (j > 0) result += ","
+      var c = clips[j]
+      result += "{"
+      result += '"idx":' + c.idx + ","
+      result += '"name":"' + c.name.replace(/"/g, '\\"') + '",'
+      result += '"startTicks":"' + c.startTicks + '",'
+      result += '"endTicks":"' + c.endTicks + '",'
+      result += '"inPointTicks":"' + c.inPointTicks + '",'
+      result += '"outPointTicks":"' + c.outPointTicks + '"'
+      result += "}"
+    }
+    result += "]}"
+
+    return result
+  } catch (e) {
+    return '{"error":"' + e.toString() + '"}'
+  }
+}
+
+/**
+ * 트랙의 모든 클립 정보 저장 (복원용)
+ */
+function saveTrackState() {
+  try {
+    var seq = app.project.activeSequence
+    if (!seq) return '{"error":"시퀀스 없음"}'
+
+    var videoTrack = seq.videoTracks[0]
+    var clips = []
+
+    for (var i = 0; i < videoTrack.clips.numItems; i++) {
+      var clip = videoTrack.clips[i]
+      clips.push({
+        index: i,
+        startTicks: clip.start.ticks,
+        endTicks: clip.end.ticks,
+        inPointTicks: clip.inPoint.ticks,
+        outPointTicks: clip.outPoint.ticks,
+        name: clip.name || "",
+      })
+    }
+
+    // JSON 직접 생성
+    var result = '{"clips":['
+    for (var j = 0; j < clips.length; j++) {
+      if (j > 0) result += ","
+      var c = clips[j]
+      result += "{"
+      result += '"index":' + c.index + ","
+      result += '"startTicks":"' + c.startTicks + '",'
+      result += '"endTicks":"' + c.endTicks + '",'
+      result += '"inPointTicks":"' + c.inPointTicks + '",'
+      result += '"outPointTicks":"' + c.outPointTicks + '",'
+      result += '"name":"' + c.name.replace(/"/g, '\\"') + '"'
+      result += "}"
+    }
+    result += "]}"
+
+    return result
+  } catch (e) {
+    return '{"error":"' + e.toString() + '"}'
+  }
+}
+
+/**
+ * QE razor로 구간 삭제 (초 단위 입력)
+ * @param {number} startSec - 시작 시간 (초)
+ * @param {number} endSec - 끝 시간 (초)
+ * @param {number} trackIndex - 트랙 인덱스 (기본 0)
+ */
+function razorDeleteRangeSec(startSec, endSec, trackIndex) {
+  try {
+    app.enableQE()
+
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) return '{"success":false,"error":"QE 시퀀스 없음"}'
+
+    trackIndex = trackIndex || 0
+
+    var startTC = secondsToTimecode(startSec)
+    var endTC = secondsToTimecode(endSec)
+
+    var qeVideoTrack = qeSeq.getVideoTrackAt(trackIndex)
+    var qeAudioTrack = qeSeq.getAudioTrackAt(trackIndex)
+
+    // 1. 시작점 razor
+    if (qeVideoTrack) qeVideoTrack.razor(startTC)
+    if (qeAudioTrack) qeAudioTrack.razor(startTC)
+
+    // 2. 끝점 razor
+    if (qeVideoTrack) qeVideoTrack.razor(endTC)
+    if (qeAudioTrack) qeAudioTrack.razor(endTC)
+
+    // 3. 중간 클립 삭제 (공식 DOM 사용)
+    var seq = app.project.activeSequence
+    var videoTrack = seq.videoTracks[trackIndex]
+    var audioTrack = seq.audioTracks[trackIndex]
+
+    var deletedVideo = false
+    var deletedAudio = false
+
+    // razor 후 생긴 클립 중 startSec~endSec 사이에 있는 것 삭제
+    for (var i = videoTrack.clips.numItems - 1; i >= 0; i--) {
+      var clip = videoTrack.clips[i]
+      var clipStart = clip.start.seconds
+      var clipEnd = clip.end.seconds
+
+      // 클립이 구간 안에 완전히 포함되면 삭제
+      if (clipStart >= startSec - 0.01 && clipEnd <= endSec + 0.01) {
+        clip.remove(true, true) // ripple delete
+        deletedVideo = true
+      }
+    }
+
+    if (audioTrack) {
+      for (var j = audioTrack.clips.numItems - 1; j >= 0; j--) {
+        var aClip = audioTrack.clips[j]
+        var aClipStart = aClip.start.seconds
+        var aClipEnd = aClip.end.seconds
+
+        if (aClipStart >= startSec - 0.01 && aClipEnd <= endSec + 0.01) {
+          aClip.remove(true, true)
+          deletedAudio = true
+        }
+      }
+    }
+
+    return(
+      '{"success":true,"startTC":"' +
+      startTC +
+      '","endTC":"' +
+      endTC +
+      '","deletedVideo":' +
+      deletedVideo +
+      ',"deletedAudio":' +
+      deletedAudio +
+      "}"
+    )
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * 단어 복원 - projectItem.setInPoint/setOutPoint + insertClip 방식
+ */
+function restoreWordByOverwrite(sourceInTicks, sourceOutTicks) {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return '{"success":false,"error":"시퀀스 없음"}';
+
+        var sourceIn = parseFloat(sourceInTicks);
+        var sourceOut = parseFloat(sourceOutTicks);
+        var inPointSec = ticksToSeconds(sourceIn);
+        var outPointSec = ticksToSeconds(sourceOut);
+
+        // 비디오 트랙 0번만 처리 (테스트)
+        var vTrack = seq.videoTracks[0];
+        if (!vTrack || vTrack.clips.numItems === 0) {
+            return '{"success":false,"error":"비디오 트랙 없음"}';
+        }
+
+        // 왼쪽 클립 찾기 (outPoint === sourceInTicks)
+        var leftClip = null;
+        for (var i = 0; i < vTrack.clips.numItems; i++) {
+            var clip = vTrack.clips[i];
+            if (String(clip.outPoint.ticks) === String(sourceInTicks)) {
+                leftClip = clip;
+                break;
+            }
+        }
+
+        if (!leftClip) {
+            return '{"success":false,"error":"왼쪽 클립 없음"}';
+        }
+
+        var projectItem = leftClip.projectItem;
+        if (!projectItem) {
+            return '{"success":false,"error":"projectItem 없음"}';
+        }
+
+        // 삽입 위치
+        var insertPositionSec = leftClip.end.seconds;
+
+        // projectItem에 in/out 설정
+        var inTime = leftClip.inPoint;
+        inTime.seconds = inPointSec;
+        projectItem.setInPoint(inTime, 4);
+
+        var outTime = leftClip.outPoint;
+        outTime.seconds = outPointSec;
+        projectItem.setOutPoint(outTime, 4);
+
+        // insertClip으로 삽입
+        vTrack.insertClip(projectItem, insertPositionSec);
+
+        return '{"success":true,"inPointSec":' + inPointSec + ',"outPointSec":' + outPointSec + '}';
+    } catch (e) {
+        return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
+    }
+}
+
+/**
+ * QE razor - QETime 객체 사용
+ */
+function razorAtQETime(timeSec, trackIndex) {
+  try {
+    app.enableQE()
+
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) return '{"success":false,"error":"QE 시퀀스 없음"}'
+
+    trackIndex = trackIndex || 0
+    var qeVideoTrack = qeSeq.getVideoTrackAt(trackIndex)
+
+    // QETime 객체 생성 시도
+    var ticks = secondsToTicks(timeSec).toString()
+    var qeTime = qeSeq.CTI // CTI를 템플릿으로 사용
+
+    // CTI의 ticks 속성 확인
+    var ctiInfo = "CTI type: " + typeof qeTime
+    if (qeTime && qeTime.ticks) {
+      ctiInfo += ", ticks: " + qeTime.ticks
+    }
+    if (qeTime && qeTime.secs) {
+      ctiInfo += ", secs: " + qeTime.secs
+    }
+    if (qeTime && qeTime.timecode) {
+      ctiInfo += ", timecode: " + qeTime.timecode
+    }
+
+    return '{"success":false,"info":"' + ctiInfo + '"}'
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}
+
+/**
+ * QE CTI 정보 확인
+ */
+function inspectQECTI() {
+  try {
+    app.enableQE()
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) return '{"error":"QE 시퀀스 없음"}'
+
+    var cti = qeSeq.CTI
+    var props = []
+
+    for (var key in cti) {
+      try {
+        var val = cti[key]
+        var valStr = typeof val === "function" ? "function" : String(val)
+        props.push(key + ":" + valStr)
+      } catch (e) {}
+    }
+
+    return '{"props":"' + props.join(", ") + '"}'
+  } catch (e) {
+    return '{"error":"' + e.toString() + '"}'
+  }
+}
+
+/**
+ * QE razor로 구간 삭제 (시작-끝)
+ * @param {number} startSec - 시작 시간 (초)
+ * @param {number} endSec - 끝 시간 (초)
+ * @param {number} trackIndex - 트랙 인덱스 (기본 0)
+ */
+function razorDeleteRange(startSec, endSec, trackIndex) {
+  try {
+    app.enableQE()
+
+    if (typeof qe === "undefined") {
+      return '{"success":false,"error":"qe 객체 없음"}'
+    }
+
+    var qeSeq = qe.project.getActiveSequence()
+    if (!qeSeq) {
+      return '{"success":false,"error":"QE 시퀀스 없음"}'
+    }
+
+    trackIndex = trackIndex || 0
+
+    var qeVideoTrack = qeSeq.getVideoTrackAt(trackIndex)
+    var qeAudioTrack = qeSeq.getAudioTrackAt(trackIndex)
+
+    if (!qeVideoTrack || typeof qeVideoTrack.razor !== "function") {
+      return '{"success":false,"error":"razor 함수 없음"}'
+    }
+
+    // 1. 시작점에서 razor
+    qeVideoTrack.razor(startSec)
+    if (qeAudioTrack) qeAudioTrack.razor(startSec)
+
+    // 2. 끝점에서 razor
+    qeVideoTrack.razor(endSec)
+    if (qeAudioTrack) qeAudioTrack.razor(endSec)
+
+    // 3. 중간 클립 삭제 (공식 DOM 사용)
+    var seq = app.project.activeSequence
+    var videoTrack = seq.videoTracks[trackIndex]
+    var audioTrack = seq.audioTracks[trackIndex]
+
+    // razor 후 클립이 분할되었으므로 해당 구간의 클립 찾기
+    // startSec ~ endSec 사이에 시작하는 클립을 삭제
+    var deletedVideo = false
+    var deletedAudio = false
+
+    for (var i = videoTrack.clips.numItems - 1; i >= 0; i--) {
+      var clip = videoTrack.clips[i]
+      var clipStart = clip.start.seconds
+      var clipEnd = clip.end.seconds
+
+      // 클립이 구간 안에 완전히 포함되면 삭제
+      if (clipStart >= startSec - 0.001 && clipEnd <= endSec + 0.001) {
+        clip.remove(true, true) // ripple delete
+        deletedVideo = true
+      }
+    }
+
+    if (audioTrack) {
+      for (var j = audioTrack.clips.numItems - 1; j >= 0; j--) {
+        var aClip = audioTrack.clips[j]
+        var aClipStart = aClip.start.seconds
+        var aClipEnd = aClip.end.seconds
+
+        if (aClipStart >= startSec - 0.001 && aClipEnd <= endSec + 0.001) {
+          aClip.remove(true, true)
+          deletedAudio = true
+        }
+      }
+    }
+
+    return(
+      '{"success":true,"deletedVideo":' +
+      deletedVideo +
+      ',"deletedAudio":' +
+      deletedAudio +
+      "}"
+    )
+  } catch (e) {
+    return(
+      '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}'
+    )
+  }
+}

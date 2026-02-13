@@ -1,0 +1,54 @@
+.word {
+  position: relative;
+  margin-right: 4px;
+  margin-bottom: 2px;
+  overflow: visible;
+  padding: 2px 4px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.word:hover {
+  background: #999999;
+  color: #fff;
+}
+
+.word-deleted {
+  color: #5e5e5e;
+  text-decoration: line-through;
+}
+
+.word-normal {
+  font-size: 14px;
+}
+
+.word-edit {
+  font-size: 14px;
+  background: #666666;
+  color: #ffa500;
+}
+
+.word-edit.word-deleted {
+  background-color: #3e3e3e;
+  color: #5e5e5e;
+}
+
+.word-edit:hover {
+  color: #fff;
+}
+
+.word-current {
+  background-color: #2d8cff !important;
+  color: #fff;
+}
+
+/* 검색 결과 하이라이트 */
+.word-search-match {
+  background-color: rgba(255, 230, 0, 0.3);
+}
+
+.word-search-current {
+  background-color: rgba(255, 165, 0, 0.6);
+  outline: 2px solid orange;
+}
