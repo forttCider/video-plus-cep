@@ -1,10 +1,10 @@
 .word {
   position: relative;
-  margin-right: 4px;
-  margin-bottom: 2px;
+  margin-right: 5px;
+  margin-bottom: 3px;
   overflow: visible;
-  padding: 2px 4px;
-  border-radius: 2px;
+  padding: 3px 5px;
+  border-radius: 3px;
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -20,11 +20,11 @@
 }
 
 .word-normal {
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .word-edit {
-  font-size: 14px;
+  font-size: 16px;
   background: #666666;
   color: #ffa500;
 }
@@ -41,6 +41,17 @@
 .word-current {
   background-color: #2d8cff !important;
   color: #fff;
+}
+
+.word-focused {
+  background: #999999;
+  color: #fff;
+}
+
+/* K키로 선택된 단어 (삭제 예정) */
+.word-selected {
+  color: #5e5e5e;
+  text-decoration: line-through;
 }
 
 /* 검색 결과 하이라이트 */

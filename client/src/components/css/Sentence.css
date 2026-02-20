@@ -1,7 +1,7 @@
 .sentence {
   display: flex;
   padding: 12px 0;
-  align-items: flex-start;
+  align-items: stretch;
   border-bottom: 1px solid #333;
 }
 
@@ -11,15 +11,24 @@
 
 .sentence-options {
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 70px;
 }
 
 .sentence-edit {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  gap: 2px;
 }
 
 .sentence-edit p {
-  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: #888;
   padding: 4px 6px;
   cursor: pointer;
@@ -33,18 +42,24 @@
 }
 
 .sentence-cut {
-  margin-right: 4px;
+  font-weight: bold;
+}
+
+.sentence-cut.selected {
+  color: #4caf50 !important;
+  background: rgba(76, 175, 80, 0.2);
 }
 
 .sentence-info {
   margin-left: 10px;
-  padding-top: 2px;
   flex: 1;
 }
 
 .sentence-info > p {
   font-size: 12px;
   margin-bottom: 6px;
+  padding-left: 5px;
+  padding-right: 5px;
   color: #8e8e8e;
 }
 
@@ -57,11 +72,14 @@
 .sentence-spk {
   display: flex;
   align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: #4caf50;
   padding: 4px 6px;
 }
 
 .sentence-play {
-  font-size: 12px !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }

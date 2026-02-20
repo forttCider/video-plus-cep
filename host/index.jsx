@@ -16,6 +16,75 @@ function testConnection() {
 }
 
 /**
+ * 모든 트랙 잠금/해제
+ * @param {boolean} lock - true면 잠금, false면 해제
+ */
+function setAllTracksLocked(lock) {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return '{"success":false,"error":"시퀀스 없음"}';
+        
+        // lock을 정수로 변환 (PPro API는 1/0 사용)
+        var lockValue = lock ? 1 : 0;
+        
+        // 비디오 트랙 잠금
+        for (var i = 0; i < seq.videoTracks.numTracks; i++) {
+            seq.videoTracks[i].setLocked(lockValue);
+        }
+        
+        // 오디오 트랙 잠금
+        for (var j = 0; j < seq.audioTracks.numTracks; j++) {
+            seq.audioTracks[j].setLocked(lockValue);
+        }
+        
+        return '{"success":true,"locked":' + lock + ',"videoTracks":' + seq.videoTracks.numTracks + ',"audioTracks":' + seq.audioTracks.numTracks + '}';
+    } catch (e) {
+        return '{"success":false,"error":"' + e.toString() + '"}';
+    }
+}
+
+/**
+ * 재생/정지 토글
+ */
+function togglePlayback() {
+    try {
+        app.enableQE();
+        var qeSeq = qe.project.getActiveSequence();
+        if (!qeSeq) return '{"success":false,"error":"시퀀스 없음"}';
+        
+        // QE player API
+        var player = qeSeq.player;
+        if (player) {
+            if (player.isPlaying) {
+                player.stop();
+            } else {
+                player.play(1.0);  // 1.0 = 정상 속도
+            }
+            return '{"success":true}';
+        }
+        
+        return '{"success":false,"error":"player API 없음"}';
+    } catch (e) {
+        return '{"success":false,"error":"' + e.toString() + '"}';
+    }
+}
+
+/**
+ * 재생 상태 확인
+ */
+function isPlaying() {
+    try {
+        app.enableQE();
+        var qeSeq = qe.project.getActiveSequence();
+        if (!qeSeq || !qeSeq.player) return '{"success":false,"isPlaying":false}';
+        
+        return '{"success":true,"isPlaying":' + qeSeq.player.isPlaying + '}';
+    } catch (e) {
+        return '{"success":false,"error":"' + e.toString() + '"}';
+    }
+}
+
+/**
  * 시퀀스에 단어 데이터 저장 (XMP 메타데이터)
  * @param {string} jsonData - JSON 문자열
  * @param {string} sequenceId - (선택) 특정 시퀀스 ID, 없으면 activeSequence

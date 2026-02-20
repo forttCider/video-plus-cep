@@ -45,6 +45,32 @@ export function loadExtendScript() {
 }
 
 /**
+ * 키보드 이벤트 등록 (Premiere가 가로채지 않도록)
+ * Mac: 123=←, 124=→, 125=↓, 126=↑
+ * Windows: 37=←, 39=→, 40=↓, 38=↑
+ * K: 75 (공통)
+ */
+export function registerKeyEvents() {
+  try {
+    const cs = getCSInterface();
+    const isMac = navigator.userAgent.indexOf("Mac") !== -1;
+    
+    // 모든 키코드 등록 (0-126) - Premiere 키보드 가로채기 우회
+    const keyEvents = [];
+    for (let i = 0; i <= 126; i++) {
+      keyEvents.push({ "keyCode": i });
+    }
+    
+    cs.registerKeyEventsInterest(JSON.stringify(keyEvents));
+    console.log("[CEP] 키보드 이벤트 등록 완료 (0-126):", keyEvents.length, "개");
+    return isMac;
+  } catch (e) {
+    console.error("[CEP] 키보드 이벤트 등록 실패:", e);
+    return false;
+  }
+}
+
+/**
  * ExtendScript 함수 호출 (Promise)
  */
 export function evalScript(script) {
@@ -555,4 +581,26 @@ export async function getAdjustmentLayerInfo() {
  */
 export async function insertAdjustmentLayers(filePath) {
   return evalJSON(`insertAdjustmentLayers('${filePath}')`);
+}
+
+/**
+ * 재생/정지 토글
+ */
+export async function togglePlayback() {
+  return evalJSON(`togglePlayback()`);
+}
+
+/**
+ * 재생 상태 확인
+ */
+export async function isPlaying() {
+  return evalJSON(`isPlaying()`);
+}
+
+/**
+ * 모든 트랙 잠금/해제
+ * @param {boolean} lock - true면 잠금, false면 해제
+ */
+export async function setAllTracksLocked(lock) {
+  return evalJSON(`setAllTracksLocked(${lock})`);
 }

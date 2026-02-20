@@ -7,6 +7,8 @@ const Word = React.memo(
       {
         word,
         isCurrentWord,
+        isFocused,
+        isSelected,
         isSearchMatch,
         isCurrentSearchMatch,
         onClick,
@@ -23,6 +25,8 @@ const Word = React.memo(
         "word",
         "word-normal",
         isCurrentWord ? "word-current" : "",
+        isFocused ? "word-focused" : "",
+        isSelected ? "word-selected" : "",
         word.isEdit || word.edit_points?.reason ? "word-edit" : "",
         word.isDeleted ? "word-deleted" : "",
         isSearchMatch ? "word-search-match" : "",
@@ -46,6 +50,8 @@ const Word = React.memo(
   (prevProps, nextProps) => {
     return (
       prevProps.isCurrentWord === nextProps.isCurrentWord &&
+      prevProps.isFocused === nextProps.isFocused &&
+      prevProps.isSelected === nextProps.isSelected &&
       prevProps.isSearchMatch === nextProps.isSearchMatch &&
       prevProps.isCurrentSearchMatch === nextProps.isCurrentSearchMatch &&
       prevProps.word.isDeleted === nextProps.word.isDeleted &&
