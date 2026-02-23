@@ -1,0 +1,69 @@
+.waveform-panel {
+  position: relative;
+  flex-shrink: 0;
+  height: 100px;
+  background: #1a1a1a;
+  border-top: 1px solid #333;
+  margin: 0 -16px -16px -16px; /* 부모 패딩 상쇄 */
+  margin-top: 12px;
+}
+
+.waveform-empty-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-size: 13px;
+  background: #1a1a1a;
+  z-index: 5;
+}
+
+.waveform-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #888;
+  font-size: 13px;
+  z-index: 10;
+}
+
+.waveform-container {
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* wavesurfer region 스타일 */
+.waveform-container ::part(region) {
+  border-radius: 2px;
+}
+
+.waveform-container ::part(region-handle) {
+  width: 4px !important;
+  background: rgba(255, 255, 255, 0.5) !important;
+}
+
+.waveform-container ::part(region-handle):hover {
+  background: rgba(255, 255, 255, 0.8) !important;
+}
+
+/* 스크롤바 스타일 */
+.waveform-container::-webkit-scrollbar {
+  height: 8px;
+}
+
+.waveform-container::-webkit-scrollbar-track {
+  background: #2a2a2a;
+}
+
+.waveform-container::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 4px;
+}
+
+.waveform-container::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}

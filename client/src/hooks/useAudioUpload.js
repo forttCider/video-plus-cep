@@ -13,6 +13,7 @@ export default function useAudioUpload({ onFinish, onClose }) {
   const [isCanceled, setIsCanceled] = useState(false);
   const [isError, setIsError] = useState(false);
   const [uploadFile, setUploadFile] = useState(null);
+  const [audioPath, setAudioPath] = useState(null); // 파형 표시용 오디오 경로
   const intervalRef = useRef(null);
 
   // 렌더링 + 업로드 시작
@@ -30,7 +31,14 @@ export default function useAudioUpload({ onFinish, onClose }) {
 
     try {
       // 오디오 렌더링 + ArrayBuffer 읽기
-      const arrayBuffer = await renderAudioAndRead();
+      const result = await renderAudioAndRead();
+      console.log("[useAudioUpload] renderAudioAndRead 결과:", result);
+      
+      const { arrayBuffer, audioPath: renderedAudioPath } = result;
+      
+      // 오디오 경로 저장 (파형 표시용)
+      console.log("[useAudioUpload] 오디오 경로 설정:", renderedAudioPath);
+      setAudioPath(renderedAudioPath);
       
       setUploadFile((prev) => ({
         ...prev,
@@ -202,5 +210,6 @@ export default function useAudioUpload({ onFinish, onClose }) {
     isUpload,
     isError,
     isCanceled,
+    audioPath,
   };
 }

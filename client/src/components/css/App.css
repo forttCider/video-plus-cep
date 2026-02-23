@@ -143,6 +143,7 @@ html, body {
   border-radius: 4px;
   padding: 15px;
   overflow-y: auto;
+  min-height: 0; /* flex 자식 스크롤 필수 */
 }
 
 .placeholder {
@@ -209,9 +210,9 @@ html, body {
 /* 플로팅 버튼 */
 .floating-btn {
   position: fixed;
-  bottom: 20px;
+  bottom: 130px; /* 100px 파형 패널 + 30px 여백 */
   right: 20px;
-  z-index: 100;
+  z-index: 200;
   display: inline-flex;
   align-items: center;
   gap: 8px;

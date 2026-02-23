@@ -180,7 +180,7 @@ export function deleteFile(filePath) {
 
 /**
  * 오디오 렌더링 + ArrayBuffer 반환 (UXP renderAudioIMMEDIATELY와 동일한 인터페이스)
- * @returns {Promise<ArrayBuffer>}
+ * @returns {Promise<{arrayBuffer: ArrayBuffer, audioPath: string}>}
  */
 export async function renderAudioAndRead() {
   // 1. 오디오 렌더링
@@ -193,10 +193,10 @@ export async function renderAudioAndRead() {
   // 2. 파일을 ArrayBuffer로 읽기
   const arrayBuffer = await readFileAsArrayBuffer(result.outputPath);
   
-  // 3. 임시 파일 삭제
-  await deleteFile(result.outputPath);
+  // 3. 파일 유지 (파형 표시용) - 삭제하지 않음
+  // await deleteFile(result.outputPath);
   
-  return arrayBuffer;
+  return { arrayBuffer, audioPath: result.outputPath };
 }
 
 /**

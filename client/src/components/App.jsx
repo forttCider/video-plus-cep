@@ -39,6 +39,7 @@ import useAudioUpload from "../hooks/useAudioUpload"
 import initWords from "../js/initWords"
 import Sentence from "./Sentence"
 import ContextMenu from "./ContextMenu"
+import WaveformPanel from "./WaveformPanel"
 import {
   getTimelinePosition,
   getTimelinePositionTick,
@@ -82,6 +83,7 @@ export default function App() {
   const [backupList, setBackupList] = useState([])
   const [restoreConfirm, setRestoreConfirm] = useState(null)
   const [focusedWord, setFocusedWord] = useState(null)
+  const [audioPath, setAudioPath] = useState(null) // 파형 표시용 오디오 경로
   const [showProcessingModal, setShowProcessingModal] = useState(false)
   const wordRefs = useRef({})
   const sentencesRef = useRef(sentences)
@@ -348,6 +350,38 @@ export default function App() {
       e.preventDefault()
       togglePlayback().catch(() => {})
     }
+  }
+
+  // 파형에서 단어 구간 드래그로 변경 시
+  const handleWordTimeChange = (wordId, newStart, newEnd) => {
+    console.log('[파형] 단어 시간 변경:', wordId, newStart, '→', newEnd)
+    
+    setSentences(prev => {
+      return prev.map(sentence => ({
+        ...sentence,
+        words: sentence.words?.map(word => {
+          const wId = word.id || word.start_at
+          if (wId === wordId) {
+            return {
+              ...word,
+              start_at: newStart,
+              end_at: newEnd,
+              // tick 값도 업데이트 (초 → tick 변환)
+              // TICKS_PER_SECOND = 254016000000
+              start_at_tick: BigInt(Math.floor(newStart * 254016000000)),
+              end_at_tick: BigInt(Math.floor(newEnd * 254016000000)),
+            }
+          }
+          return word
+        })
+      }))
+    })
+  }
+
+  // 파형에서 클릭으로 재생 위치 이동
+  const handleWaveformSeek = async (time) => {
+    console.log('[파형] 재생 위치 이동:', time)
+    await setPlayerPosition(time)
   }
 
   const handleWordClick = async (word) => {
@@ -807,11 +841,18 @@ export default function App() {
     }
   }
 
-  const { uploadFile, onClickRenderAudio, onClickCancel, isUpload } =
+  const { uploadFile, onClickRenderAudio, onClickCancel, isUpload, audioPath: uploadedAudioPath } =
     useAudioUpload({
       onFinish: handleTranscribeFinish,
       onClose: () => setStatus("취소됨"),
     })
+
+  // audioPath 동기화
+  useEffect(() => {
+    if (uploadedAudioPath) {
+      setAudioPath(uploadedAudioPath)
+    }
+  }, [uploadedAudioPath])
 
   useEffect(() => {
     checkConnection()
@@ -1148,6 +1189,16 @@ export default function App() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* 하단 파형 패널 */}
+      <WaveformPanel
+        audioPath={audioPath}
+        sentences={sentences}
+        currentWordId={currentWordId}
+        focusedWord={focusedWord}
+        onWordTimeChange={handleWordTimeChange}
+        onSeek={handleWaveformSeek}
+      />
     </div>
   )
 }
