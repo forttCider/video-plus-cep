@@ -62,7 +62,6 @@ export function registerKeyEvents() {
     }
     
     cs.registerKeyEventsInterest(JSON.stringify(keyEvents));
-    console.log("[CEP] 키보드 이벤트 등록 완료 (0-126):", keyEvents.length, "개");
     return isMac;
   } catch (e) {
     console.error("[CEP] 키보드 이벤트 등록 실패:", e);

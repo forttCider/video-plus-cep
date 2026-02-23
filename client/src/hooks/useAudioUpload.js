@@ -155,6 +155,8 @@ export default function useAudioUpload({ onFinish, onClose }) {
       if (data.status === "completed") {
         clearInterval(intervalRef.current);
         localStorage.removeItem("canceledTaskId");
+        setIsUpload(false);  // 업로드 완료 상태로 변경
+        setUploadFile(null); // 업로드 UI 숨기기
         onFinish && onFinish(taskId);
       }
     } catch (error) {

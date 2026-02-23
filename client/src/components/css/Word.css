@@ -54,6 +54,13 @@
   text-decoration: line-through;
 }
 
+/* 무음/간투사(word-edit)가 선택됐을 때 */
+.word-edit.word-selected {
+  background-color: #3a3a3a;
+  color: #888;
+  text-decoration: line-through;
+}
+
 /* 검색 결과 하이라이트 */
 .word-search-match {
   background-color: rgba(255, 230, 0, 0.3);

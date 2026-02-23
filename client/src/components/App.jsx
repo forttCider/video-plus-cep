@@ -140,10 +140,14 @@ export default function App() {
     const currentWordIdx = focusedWord?.wordIdx ?? 0
     const key = e.key?.toLowerCase()
     const keyCode = e.keyCode
-    const isLeft = key === "a" || key === "ㅁ" || keyCode === 37 || key === "arrowleft"
-    const isRight = key === "d" || key === "ㅇ" || keyCode === 39 || key === "arrowright"
-    const isUp = key === "w" || key === "ㅈ" || keyCode === 38 || key === "arrowup"
-    const isDown = key === "s" || key === "ㄴ" || keyCode === 40 || key === "arrowdown"
+    const isLeft =
+      key === "a" || key === "ㅁ" || keyCode === 37 || key === "arrowleft"
+    const isRight =
+      key === "d" || key === "ㅇ" || keyCode === 39 || key === "arrowright"
+    const isUp =
+      key === "w" || key === "ㅈ" || keyCode === 38 || key === "arrowup"
+    const isDown =
+      key === "s" || key === "ㄴ" || keyCode === 40 || key === "arrowdown"
     const isK = key === "k" || key === "ㅏ"
     const isSpace = key === " " || keyCode === 32
 
@@ -309,7 +313,8 @@ export default function App() {
       } else {
         // 이전 문장 중 삭제 안 된 단어가 있는 문장 찾기
         for (let i = 1; i <= sentences.length; i++) {
-          const prevSentenceIdx = (currentSentenceIdx - i + sentences.length) % sentences.length
+          const prevSentenceIdx =
+            (currentSentenceIdx - i + sentences.length) % sentences.length
           const prevLines = getWordLines(sentences[prevSentenceIdx])
           if (prevLines.length > 0) {
             const lastWord = prevLines[prevLines.length - 1][0]
@@ -458,7 +463,7 @@ export default function App() {
     try {
       // 트랙 잠금 해제
       await setAllTracksLocked(false)
-      
+
       setStatus("백업 중...")
       const backupResult = await backupSequence(formatBackupName())
       if (backupResult?.success)
@@ -469,17 +474,7 @@ export default function App() {
         total: selectedWordIds.size,
         label: "일괄 적용",
       })
-      // 디버그: 선택된 단어들의 tick 확인
-      console.log("[일괄적용] selectedWordIds:", [...selectedWordIds])
-      sentencesRef.current.forEach(s => {
-        s.words?.forEach(w => {
-          const wordId = w.id || w.start_at
-          if (selectedWordIds.has(wordId)) {
-            console.log("[일괄적용] 선택된 단어:", w.text || w.word, "tick:", w.start_at_tick, w.end_at_tick)
-          }
-        })
-      })
-      
+
       const filterFn = (word) => {
         const wordId = word.id || word.start_at
         return (
@@ -488,7 +483,7 @@ export default function App() {
           word.end_at_tick !== undefined
         )
       }
-      const { deletedWordIds: actuallyDeleted, success } =
+      const { deletedWordIds: actuallyDeleted, updatedSentences, success } =
         await batchDeleteWords(
           filterFn,
           sentencesRef.current,
@@ -496,9 +491,9 @@ export default function App() {
             setBatchProgress({ current, total, label: "일괄 적용" }),
         )
       if (success && actuallyDeleted.size > 0) {
-        const updated = applyDeleteResult(sentencesRef.current, actuallyDeleted)
-        sentencesRef.current = updated
-        setSentences(updated)
+        // updatedSentences 사용 (gap 포함 duration 반영됨)
+        sentencesRef.current = updatedSentences
+        setSentences(updatedSentences)
         setSelectedWordIds(new Set())
         setStatus(`일괄 적용 완료: ${actuallyDeleted.size}개 단어`)
       } else setStatus("적용할 단어가 없습니다")
@@ -582,12 +577,12 @@ export default function App() {
   // 무음/간투사 단어 목록 계산
   const silenceWordIds = React.useMemo(() => {
     const ids = new Set()
-    sentences.forEach(sentence => {
-      sentence.words?.forEach(word => {
-        if (!word.isDeleted && 
-            word.edit_points?.type === "silence" && 
-            word.start_at_tick !== undefined && 
-            word.end_at_tick !== undefined) {
+    sentences.forEach((sentence) => {
+      sentence.words?.forEach((word) => {
+        if (
+          !word.isDeleted &&
+          word.edit_points?.type === "silence"
+        ) {
           ids.add(word.id || word.start_at)
         }
       })
@@ -597,12 +592,12 @@ export default function App() {
 
   const fillerWordIds = React.useMemo(() => {
     const ids = new Set()
-    sentences.forEach(sentence => {
-      sentence.words?.forEach(word => {
-        if (!word.isDeleted && 
-            FILLER_TYPES.includes(word.edit_points?.type) && 
-            word.start_at_tick !== undefined && 
-            word.end_at_tick !== undefined) {
+    sentences.forEach((sentence) => {
+      sentence.words?.forEach((word) => {
+        if (
+          !word.isDeleted &&
+          FILLER_TYPES.includes(word.edit_points?.type)
+        ) {
           ids.add(word.id || word.start_at)
         }
       })
@@ -611,24 +606,26 @@ export default function App() {
   }, [sentences])
 
   // 모든 무음/간투사가 선택되었는지 확인
-  const allSilenceSelected = silenceWordIds.size > 0 && 
-    [...silenceWordIds].every(id => selectedWordIds.has(id))
-  const allFillerSelected = fillerWordIds.size > 0 && 
-    [...fillerWordIds].every(id => selectedWordIds.has(id))
+  const allSilenceSelected =
+    silenceWordIds.size > 0 &&
+    [...silenceWordIds].every((id) => selectedWordIds.has(id))
+  const allFillerSelected =
+    fillerWordIds.size > 0 &&
+    [...fillerWordIds].every((id) => selectedWordIds.has(id))
 
   const handleSelectSilence = () => {
     if (silenceWordIds.size === 0) {
       setStatus("선택할 무음이 없습니다")
       return
     }
-    
-    setSelectedWordIds(prev => {
+
+    setSelectedWordIds((prev) => {
       const next = new Set(prev)
       if (allSilenceSelected) {
-        silenceWordIds.forEach(id => next.delete(id))
+        silenceWordIds.forEach((id) => next.delete(id))
         setStatus(`무음 ${silenceWordIds.size}개 선택 해제`)
       } else {
-        silenceWordIds.forEach(id => next.add(id))
+        silenceWordIds.forEach((id) => next.add(id))
         setStatus(`무음 ${silenceWordIds.size}개 선택`)
       }
       return next
@@ -672,14 +669,14 @@ export default function App() {
       setStatus("선택할 간투사가 없습니다")
       return
     }
-    
-    setSelectedWordIds(prev => {
+
+    setSelectedWordIds((prev) => {
       const next = new Set(prev)
       if (allFillerSelected) {
-        fillerWordIds.forEach(id => next.delete(id))
+        fillerWordIds.forEach((id) => next.delete(id))
         setStatus(`간투사 ${fillerWordIds.size}개 선택 해제`)
       } else {
-        fillerWordIds.forEach(id => next.add(id))
+        fillerWordIds.forEach((id) => next.add(id))
         setStatus(`간투사 ${fillerWordIds.size}개 선택`)
       }
       return next
@@ -722,7 +719,6 @@ export default function App() {
   }
 
   const handleTranscribeFinish = async (taskId) => {
-    console.log(taskId)
     if (!taskId) return
     setStatus("받아쓰기 결과 가져오는 중...")
     try {
@@ -798,8 +794,7 @@ export default function App() {
       })
       setStatus("타임라인 정보 처리 중...")
       const gapSentences = await initWords(newSentences)
-      const lockResult = await setAllTracksLocked(true)
-      console.log("[handleTranscribeFinish] 트랙 잠금 결과:", lockResult)
+      await setAllTracksLocked(true)
       setSentences(gapSentences)
       setStatus(`받아쓰기 완료: ${gapSentences.length}개 문장`)
     } catch (e) {
@@ -819,7 +814,7 @@ export default function App() {
 
   // 개발용: taskId로 바로 결과 가져오기
   useEffect(() => {
-    const testTaskId = "b036dae0-7f14-44e7-ac7a-a694ecb33e8f"
+    const testTaskId = "799ae2af-1d7e-4d16-9aff-ec5f3309dc5a"
     if (testTaskId && isConnected && sentences.length === 0) {
       handleTranscribeFinish(testTaskId)
     }
@@ -977,6 +972,7 @@ export default function App() {
         <Button
           variant="secondary"
           size="sm"
+          style={allSilenceSelected ? { border: '1px solid #ffa500', color: '#ffa500' } : {}}
           disabled={
             !isConnected || isUpload || isProcessing || sentences.length === 0
           }
@@ -988,6 +984,7 @@ export default function App() {
         <Button
           variant="secondary"
           size="sm"
+          style={allFillerSelected ? { border: '1px solid #ffa500', color: '#ffa500' } : {}}
           disabled={
             !isConnected || isUpload || isProcessing || sentences.length === 0
           }
@@ -1127,22 +1124,38 @@ export default function App() {
 
       {/* 작업 중 안내 모달 */}
       <Dialog open={showProcessingModal}>
-        <DialogContent className="max-w-sm" onPointerDownOutside={(e) => e.preventDefault()}>
+        <DialogContent
+          className="max-w-sm"
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>⚠️ 작업 중</DialogTitle>
           </DialogHeader>
           <div className="py-4">
             <p className="text-sm text-muted-foreground text-center mb-4">
-              시퀀스에 편집을 적용하고 있습니다.<br />
-              <strong>완료될 때까지 시퀀스를 이동하거나<br />조작하지 마세요!</strong>
+              시퀀스에 편집을 적용하고 있습니다.
+              <br />
+              <strong>
+                완료될 때까지 시퀀스를 이동하거나
+                <br />
+                조작하지 마세요!
+              </strong>
             </p>
             {batchProgress && (
               <div>
                 <div className="flex justify-between mb-2 text-sm">
                   <span>{batchProgress.label}</span>
-                  <span>{batchProgress.current} / {batchProgress.total}</span>
+                  <span>
+                    {batchProgress.current} / {batchProgress.total}
+                  </span>
                 </div>
-                <Progress value={batchProgress.total > 0 ? (batchProgress.current / batchProgress.total) * 100 : 0} />
+                <Progress
+                  value={
+                    batchProgress.total > 0
+                      ? (batchProgress.current / batchProgress.total) * 100
+                      : 0
+                  }
+                />
               </div>
             )}
           </div>

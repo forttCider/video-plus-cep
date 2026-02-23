@@ -40,6 +40,13 @@ html, body {
   font-weight: 600;
 }
 
+/* 버튼 활성화 상태 (무음/간투사 선택됨) */
+.btn-active {
+  background: transparent !important;
+  border: 1px solid #ffa500 !important;
+  color: #ffa500 !important;
+}
+
 .btn-icon {
   background: transparent;
   border: none;
