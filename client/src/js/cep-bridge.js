@@ -62,7 +62,6 @@ export function registerKeyEvents() {
     }
     
     cs.registerKeyEventsInterest(JSON.stringify(keyEvents));
-    console.log("[CEP] 키보드 이벤트 등록 완료 (0-126):", keyEvents.length, "개");
     return isMac;
   } catch (e) {
     console.error("[CEP] 키보드 이벤트 등록 실패:", e);
@@ -125,12 +124,34 @@ export async function testConnection() {
 }
 
 /**
+ * PluginData 폴더 경로 가져오기
+ */
+export function getPluginDataPath() {
+  const cs = getCSInterface();
+  const userDataPath = cs.getSystemPath(SystemPath.USER_DATA);
+  const pluginPath = `${userDataPath}/videoPlus`;
+  return pluginPath;
+}
+
+/**
+ * 폴더 생성 (없으면)
+ */
+function ensureDir(dirPath) {
+  const fs = require("fs");
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+/**
  * 오디오 렌더링 (트랙 0번만)
  * @returns {Promise<{success: boolean, outputPath?: string, error?: string}>}
  */
 export async function renderAudio() {
-  // 임시 폴더에 저장
-  const outputPath = "/tmp/videoplus_audio.wav";
+  // PluginData 폴더에 저장
+  const pluginDataPath = getPluginDataPath();
+  ensureDir(pluginDataPath);
+  const outputPath = `${pluginDataPath}/videoplus_audio.wav`;
   return evalJSON(`renderAudio("${outputPath}")`);
 }
 
@@ -179,6 +200,25 @@ export function deleteFile(filePath) {
 }
 
 /**
+ * 파일 복사 (Node.js fs 사용)
+ * @param {string} src
+ * @param {string} dest
+ */
+export function copyFile(src, dest) {
+  return new Promise((resolve, reject) => {
+    try {
+      const fs = require("fs");
+      fs.copyFile(src, dest, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+/**
  * 오디오 렌더링 + ArrayBuffer 반환 (UXP renderAudioIMMEDIATELY와 동일한 인터페이스)
  * @returns {Promise<{arrayBuffer: ArrayBuffer, audioPath: string}>}
  */
@@ -193,10 +233,19 @@ export async function renderAudioAndRead() {
   // 2. 파일을 ArrayBuffer로 읽기
   const arrayBuffer = await readFileAsArrayBuffer(result.outputPath);
   
-  // 3. 파일 유지 (파형 표시용) - 삭제하지 않음
-  // await deleteFile(result.outputPath);
+  // 3. waveAudio.wav로 복사 (파형용 - 삭제 안 함)
+  const pluginDataPath = getPluginDataPath();
+  const waveAudioPath = `${pluginDataPath}/waveAudio.wav`;
+  try {
+    await copyFile(result.outputPath, waveAudioPath);
+  } catch (e) {
+    // 복사 실패해도 계속 진행
+  }
   
-  return { arrayBuffer, audioPath: result.outputPath };
+  // 4. 원본 파일 삭제
+  await deleteFile(result.outputPath);
+  
+  return { arrayBuffer, audioPath: waveAudioPath, waveAudioPath };
 }
 
 /**
@@ -547,23 +596,6 @@ export function writeXMLFile(filePath, content) {
       });
     } catch (e) {
       reject(e);
-    }
-  });
-}
-
-/**
- * 디렉토리 생성 (없으면)
- */
-export function ensureDir(dirPath) {
-  return new Promise((resolve) => {
-    try {
-      const fs = require("fs");
-      if (!fs.existsSync(dirPath)) {
-        fs.mkdirSync(dirPath, { recursive: true });
-      }
-      resolve(true);
-    } catch (e) {
-      resolve(false);
     }
   });
 }

@@ -1,34 +1,42 @@
-import React, { useEffect, useRef, useState, useCallback } from "react"
+import React, { useEffect, useRef, useState, useMemo } from "react"
 import WaveSurfer from "wavesurfer.js"
-import RegionsPlugin from "wavesurfer.js/dist/plugins/regions.esm.js"
+import RegionsPlugin from "wavesurfer.js/dist/plugin/wavesurfer.regions.min.js"
 import "./css/WaveformPanel.css"
 
 /**
- * 하단 고정 파형 패널
- * - 오디오 파형 표시
- * - 단어별 구간 표시 (regions)
- * - 드래그로 구간 편집
- * - 가로 스크롤
+ * 하단 고정 파형 패널 (WaveSurfer v6)
  */
 export default function WaveformPanel({
   audioPath,
   sentences,
   currentWordId,
+  currentTime,
   focusedWord,
   onWordTimeChange,
   onSeek,
 }) {
   const containerRef = useRef(null)
   const wavesurferRef = useRef(null)
-  const regionsRef = useRef(null)
+  const activeRegionsRef = useRef(new Map())
+  const onWordTimeChangeRef = useRef(onWordTimeChange)
+  const onSeekRef = useRef(onSeek)
+  const isDraggingRef = useRef(false)
+  const isInternalSeekRef = useRef(false) // 내부 seek 여부
+  const lastSeekTimeRef = useRef(0) // 마지막 seek 시간
   const [isReady, setIsReady] = useState(false)
-  const [wsInitialized, setWsInitialized] = useState(false) // wavesurfer 초기화 완료 여부
   const [duration, setDuration] = useState(0)
-  const [isLoading, setIsLoading] = useState(false)
+  const [scrollTrigger, setScrollTrigger] = useState(0) // 스크롤 시 regions 업데이트용
+
+  // refs 업데이트
+  useEffect(() => {
+    onWordTimeChangeRef.current = onWordTimeChange
+    onSeekRef.current = onSeek
+  }, [onWordTimeChange, onSeek])
 
   // 모든 단어 flat 배열
-  const allWords = React.useMemo(() => {
+  const allWords = useMemo(() => {
     const words = []
+    if (!sentences) return words
     sentences.forEach((sentence, sIdx) => {
       sentence.words?.forEach((word, wIdx) => {
         if (!word.isDeleted && word.start_at !== undefined && word.end_at !== undefined) {
@@ -37,6 +45,8 @@ export default function WaveformPanel({
             sentenceIdx: sIdx,
             wordIdx: wIdx,
             id: word.id || word.start_at,
+            startSec: word.start_at / 1000,
+            endSec: word.end_at / 1000,
           })
         }
       })
@@ -44,130 +54,252 @@ export default function WaveformPanel({
     return words
   }, [sentences])
 
-  // WaveSurfer 초기화
+  // WaveSurfer v6 초기화
   useEffect(() => {
-    if (!containerRef.current || wavesurferRef.current) return
-
-    const regions = RegionsPlugin.create()
-    regionsRef.current = regions
+    if (!containerRef.current) return
 
     const ws = WaveSurfer.create({
       container: containerRef.current,
       waveColor: "#4a5568",
-      progressColor: "#4caf50",
+      progressColor: "#4a5568",
       cursorColor: "#fff",
       cursorWidth: 2,
-      height: 80,
-      barWidth: 2,
-      barGap: 1,
-      barRadius: 2,
+      height: 100,
       normalize: true,
-      minPxPerSec: 100, // 줌 레벨 (픽셀/초) - 단어 보일 정도로
-      scrollParent: true, // 가로 스크롤 활성화
-      autoScroll: true,
-      autoCenter: false,
-      plugins: [regions],
-    })
-
-    ws.on("ready", () => {
-      setIsReady(true)
-      setDuration(ws.getDuration())
-      setIsLoading(false)
-    })
-
-    ws.on("click", (relativeX) => {
-      const time = relativeX * ws.getDuration()
-      if (onSeek) onSeek(time)
-    })
-
-    ws.on("error", (err) => {
-      console.error("[Waveform] 오류:", err)
-      setIsLoading(false)
+      minPxPerSec: 200,
+      scrollParent: true,
+      backend: "MediaElement",
+      plugins: [
+        RegionsPlugin.create({
+          dragSelection: false, // 새 region 생성 비활성화
+        }),
+      ],
     })
 
     wavesurferRef.current = ws
-    setWsInitialized(true)
-    console.log("[Waveform] wavesurfer 초기화 완료")
+
+    ws.on("ready", () => {
+      setDuration(ws.getDuration())
+      
+      // 파형 렌더링 완료 후 isReady 설정
+      setTimeout(() => {
+        setIsReady(true)
+        
+        // 스크롤 시 regions 업데이트 (throttle 적용)
+        const wrapper = ws.drawer?.wrapper
+        if (wrapper) {
+          let scrollTimeout = null
+          wrapper.addEventListener("scroll", () => {
+            if (scrollTimeout) return
+            scrollTimeout = setTimeout(() => {
+              setScrollTrigger(n => n + 1)
+              scrollTimeout = null
+            }, 200) // 200ms throttle
+          })
+        }
+      }, 500) // 파형 렌더링 대기
+    })
+
+    // v6 방식: wavesurfer.on('region-*')
+    ws.on("region-update-end", (region) => {
+      isDraggingRef.current = false
+      
+      if (onWordTimeChangeRef.current && region.id) {
+        onWordTimeChangeRef.current(region.id, region.start * 1000, region.end * 1000)
+      }
+    })
+
+    ws.on("region-updated", (region) => {
+      isDraggingRef.current = true
+    })
+
+    ws.on("region-click", (region, e) => {
+      e.stopPropagation()
+      
+      // 해당 단어 위치로 이동
+      if (onSeekRef.current) {
+        onSeekRef.current(region.start)
+      }
+      
+      // 클릭한 위치를 화면 가운데로 스크롤
+      const wrapper = ws.drawer?.wrapper
+      if (wrapper) {
+        const dur = ws.getDuration()
+        if (dur) {
+          const scrollWidth = wrapper.scrollWidth
+          const clientWidth = wrapper.clientWidth
+          const scrollPos = (region.start / dur) * scrollWidth - (clientWidth / 2)
+          wrapper.scrollLeft = Math.max(0, scrollPos)
+        }
+      }
+    })
+
+    ws.on("seek", (progress) => {
+      if (isDraggingRef.current || isInternalSeekRef.current) return
+      const time = progress * ws.getDuration()
+      if (onSeekRef.current) onSeekRef.current(time)
+    })
 
     return () => {
       ws.destroy()
       wavesurferRef.current = null
-      setWsInitialized(false)
+      activeRegionsRef.current.clear()
+      setIsReady(false)
     }
   }, [])
 
-  // 오디오 파일 로드 (wavesurfer 초기화 완료 후)
+  // 오디오 파일 로드
   useEffect(() => {
-    console.log("[Waveform] audioPath 변경:", audioPath, "wsInitialized:", wsInitialized)
-    if (!audioPath || !wsInitialized || !wavesurferRef.current) return
+    if (!audioPath || !wavesurferRef.current) return
 
-    setIsLoading(true)
     setIsReady(false)
-
-    // file:// 프로토콜 또는 경로 처리
-    const url = audioPath.startsWith("file://") ? audioPath : `file://${audioPath}`
+    activeRegionsRef.current.clear()
     
-    console.log("[Waveform] 오디오 로드 시작:", url)
-    wavesurferRef.current.load(url)
-  }, [audioPath, wsInitialized])
-
-  // Regions 업데이트 (단어 구간)
-  useEffect(() => {
-    if (!isReady || !regionsRef.current) return
-
-    const regions = regionsRef.current
-
     // 기존 regions 제거
-    regions.clearRegions()
+    wavesurferRef.current.clearRegions()
 
-    // 단어별 region 추가
-    allWords.forEach((word) => {
+    let url = audioPath
+    if (!audioPath.startsWith("blob:") && !audioPath.startsWith("http") && !audioPath.startsWith("file://")) {
+      url = `file://${audioPath}`
+    }
+
+    wavesurferRef.current.load(url)
+  }, [audioPath])
+
+  // regions 업데이트 (v6 방식: wavesurfer.addRegion)
+  useEffect(() => {
+    if (!isReady || !wavesurferRef.current || !duration) return
+
+    const ws = wavesurferRef.current
+
+    // 현재 보이는 범위 계산
+    const wrapper = ws.drawer?.wrapper
+    let visibleStart = 0
+    let visibleEnd = duration
+
+    if (wrapper) {
+      const scrollLeft = wrapper.scrollLeft
+      const width = wrapper.clientWidth
+      const scrollWidth = wrapper.scrollWidth
+      if (scrollWidth > 0) {
+        const pxPerSec = scrollWidth / duration
+        visibleStart = scrollLeft / pxPerSec - 5
+        visibleEnd = (scrollLeft + width) / pxPerSec + 5
+      }
+    }
+
+    // 보이는 범위의 단어 필터
+    const visibleWords = allWords.filter(
+      word => word.endSec >= visibleStart && word.startSec <= visibleEnd
+    )
+    const visibleIds = new Set(visibleWords.map(w => String(w.id)))
+
+    // 보이지 않는 region 제거
+    activeRegionsRef.current.forEach((region, id) => {
+      if (!visibleIds.has(id)) {
+        region.remove()
+        activeRegionsRef.current.delete(id)
+      }
+    })
+
+    // 새로 보이는 region 추가
+    visibleWords.forEach((word) => {
+      const id = String(word.id)
       const isFocused = focusedWord?.sentenceIdx === word.sentenceIdx && 
                         focusedWord?.wordIdx === word.wordIdx
-      const isCurrent = currentWordId === word.start_at
+      // currentTime 기준으로 현재 단어인지 판단 (더 정확함)
+      const isCurrent = currentTime >= word.startSec && currentTime < word.endSec
 
-      const region = regions.addRegion({
-        id: String(word.id),
-        start: word.start_at,
-        end: word.end_at,
-        color: isCurrent 
-          ? "rgba(76, 175, 80, 0.5)" 
-          : isFocused 
-            ? "rgba(59, 130, 246, 0.5)" 
-            : "rgba(100, 100, 100, 0.3)",
-        drag: false, // 전체 드래그 비활성화
-        resize: true, // 양쪽 끝 리사이즈 활성화
-        content: word.text,
-      })
+      const color = (isCurrent || isFocused)
+        ? "rgba(255, 230, 0, 0.25)" 
+        : "rgba(100, 100, 100, 0.1)"
 
-      // 리사이즈 완료 시 단어 시간 업데이트
-      region.on("update-end", () => {
-        if (onWordTimeChange) {
-          onWordTimeChange(word.id, region.start, region.end)
+      if (!activeRegionsRef.current.has(id)) {
+        // v6 방식: wavesurfer.addRegion()
+        const region = ws.addRegion({
+          id,
+          start: word.startSec,
+          end: word.endSec,
+          color,
+          drag: false,
+          resize: true,
+          data: { text: word.text },
+        })
+        
+        // v6: region 요소에 텍스트 직접 추가
+        if (region.element) {
+          const label = document.createElement('span')
+          label.textContent = word.text
+          label.style.cssText = 'position:absolute;top:2px;left:4px;font-size:11px;color:#fff;white-space:nowrap;pointer-events:none;text-shadow:0 0 2px #000;'
+          region.element.appendChild(label)
         }
-      })
+        
+        activeRegionsRef.current.set(id, region)
+      } else {
+        const region = activeRegionsRef.current.get(id)
+        if (region && region.element) {
+          region.element.style.backgroundColor = color
+        }
+      }
     })
-  }, [isReady, allWords, focusedWord, currentWordId, onWordTimeChange])
+  }, [isReady, duration, allWords, focusedWord, currentTime, scrollTrigger])
 
-  // 현재 재생/포커스 위치로 스크롤
+  // 커서를 화면 중앙으로 스크롤
+  const scrollToCursor = (time) => {
+    try {
+      const ws = wavesurferRef.current
+      if (!ws) return
+      
+      const wrapper = ws.drawer?.wrapper || ws.container?.querySelector('wave')
+      if (!wrapper) return
+      
+      const scrollWidth = wrapper.scrollWidth
+      const clientWidth = wrapper.clientWidth
+      const dur = ws.getDuration()
+      if (!dur || !scrollWidth) return
+      
+      const scrollPos = (time / dur) * scrollWidth - (clientWidth / 2)
+      wrapper.scrollLeft = Math.max(0, scrollPos)
+    } catch (e) {
+      console.error("[파형] scrollToCursor 오류:", e)
+    }
+  }
+
+  // 현재 재생 위치로 파형 커서 이동
   useEffect(() => {
-    if (!isReady || !wavesurferRef.current) return
+    if (!isReady || !wavesurferRef.current || !duration) return
+    if (currentTime <= 0) return
 
-    let targetTime = null
+    const progress = Math.min(currentTime / duration, 1)
+    isInternalSeekRef.current = true
+    wavesurferRef.current.seekTo(progress)
+    scrollToCursor(currentTime)
+    setTimeout(() => { isInternalSeekRef.current = false }, 50)
     
-    if (currentWordId) {
-      const word = allWords.find(w => w.start_at === currentWordId)
-      if (word) targetTime = word.start_at
-    } else if (focusedWord) {
-      const word = sentences[focusedWord.sentenceIdx]?.words?.[focusedWord.wordIdx]
-      if (word) targetTime = word.start_at
+    // regions 업데이트는 0.3초마다만
+    if (Math.abs(currentTime - lastSeekTimeRef.current) >= 0.3) {
+      lastSeekTimeRef.current = currentTime
+      setScrollTrigger(n => n + 1)
     }
+  }, [currentTime, isReady, duration])
 
-    if (targetTime !== null && duration > 0) {
-      const progress = targetTime / duration
-      wavesurferRef.current.seekTo(progress)
-    }
-  }, [currentWordId, focusedWord, isReady, duration, allWords, sentences])
+  // 단어 클릭(포커스) 시 파형 커서 이동
+  useEffect(() => {
+    if (!isReady || !wavesurferRef.current || !duration || !focusedWord) return
+
+    const word = sentences[focusedWord.sentenceIdx]?.words?.[focusedWord.wordIdx]
+    if (!word || word.start_at === undefined) return
+
+    const startSeconds = word.start_at / 1000
+    const progress = Math.min(startSeconds / duration, 1)
+    isInternalSeekRef.current = true
+    wavesurferRef.current.seekTo(progress)
+    scrollToCursor(startSeconds)
+    setTimeout(() => { isInternalSeekRef.current = false }, 50)
+    
+    // regions 업데이트 트리거
+    setScrollTrigger(n => n + 1)
+  }, [focusedWord, isReady, duration, sentences])
 
   return (
     <div className="waveform-panel">
@@ -176,7 +308,7 @@ export default function WaveformPanel({
           <p>받아쓰기 후 파형이 표시됩니다</p>
         </div>
       )}
-      {isLoading && (
+      {audioPath && !isReady && (
         <div className="waveform-loading">
           <p>파형 로딩 중...</p>
         </div>
@@ -184,7 +316,7 @@ export default function WaveformPanel({
       <div 
         ref={containerRef} 
         className="waveform-container"
-        style={{ opacity: !audioPath ? 0 : isLoading ? 0.3 : 1 }}
+        style={{ opacity: !audioPath ? 0 : isReady ? 1 : 0.3 }}
       />
     </div>
   )

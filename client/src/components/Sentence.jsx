@@ -18,6 +18,7 @@ const Sentence = forwardRef(
       onWordContextMenu,
       onDeleteSentence,
       onRestoreSentence,
+      onSentencePlay,
       searchResultsSet = new Set(),
       currentSearchWordId = null,
       wordRefs = { current: {} },
@@ -31,6 +32,11 @@ const Sentence = forwardRef(
 
       const { start } = getTimelinePosition(words[0], sentences);
       await setPlayerPosition(start);
+      
+      // 파형 이동을 위해 첫 단어 focus
+      if (onSentencePlay) {
+        onSentencePlay(sentenceIdx, 0);
+      }
     };
 
     // 문장의 선택 가능한 단어들 (0n도 유효한 값으로 처리)

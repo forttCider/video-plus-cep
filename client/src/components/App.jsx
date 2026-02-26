@@ -6,6 +6,7 @@ import {
   Scissors,
   History,
   FolderOpen,
+  AudioWaveform,
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Badge } from "./ui/badge"
@@ -85,6 +86,7 @@ export default function App() {
   const [focusedWord, setFocusedWord] = useState(null)
   const [audioPath, setAudioPath] = useState(null) // 파형 표시용 오디오 경로
   const [showProcessingModal, setShowProcessingModal] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0) // 현재 재생 위치 (초)
   const wordRefs = useRef({})
   const sentencesRef = useRef(sentences)
   const timelineIndexRef = useRef(null)
@@ -110,16 +112,19 @@ export default function App() {
       try {
         const playingResult = await isPlaying()
         if (!playingResult?.isPlaying) {
-          setCurrentWordId(null)
+          // 재생 멈춤 - currentWordId는 유지 (노란색 배경 유지)
           return
         }
         const result = await getPlayerPosition()
-        if (result?.success && timelineIndexRef.current) {
-          const found = findCurrentWordFromIndex(
-            timelineIndexRef.current,
-            result.seconds,
-          )
-          if (found?.word) setCurrentWordId(found.word.start_at)
+        if (result?.success) {
+          setCurrentTime(result.seconds)
+          if (timelineIndexRef.current) {
+            const found = findCurrentWordFromIndex(
+              timelineIndexRef.current,
+              result.seconds,
+            )
+            if (found?.word) setCurrentWordId(found.word.start_at)
+          }
         }
       } catch (e) {}
     }, 100)
@@ -142,10 +147,14 @@ export default function App() {
     const currentWordIdx = focusedWord?.wordIdx ?? 0
     const key = e.key?.toLowerCase()
     const keyCode = e.keyCode
-    const isLeft = key === "a" || key === "ㅁ" || keyCode === 37 || key === "arrowleft"
-    const isRight = key === "d" || key === "ㅇ" || keyCode === 39 || key === "arrowright"
-    const isUp = key === "w" || key === "ㅈ" || keyCode === 38 || key === "arrowup"
-    const isDown = key === "s" || key === "ㄴ" || keyCode === 40 || key === "arrowdown"
+    const isLeft =
+      key === "a" || key === "ㅁ" || keyCode === 37 || key === "arrowleft"
+    const isRight =
+      key === "d" || key === "ㅇ" || keyCode === 39 || key === "arrowright"
+    const isUp =
+      key === "w" || key === "ㅈ" || keyCode === 38 || key === "arrowup"
+    const isDown =
+      key === "s" || key === "ㄴ" || keyCode === 40 || key === "arrowdown"
     const isK = key === "k" || key === "ㅏ"
     const isSpace = key === " " || keyCode === 32
 
@@ -311,7 +320,8 @@ export default function App() {
       } else {
         // 이전 문장 중 삭제 안 된 단어가 있는 문장 찾기
         for (let i = 1; i <= sentences.length; i++) {
-          const prevSentenceIdx = (currentSentenceIdx - i + sentences.length) % sentences.length
+          const prevSentenceIdx =
+            (currentSentenceIdx - i + sentences.length) % sentences.length
           const prevLines = getWordLines(sentences[prevSentenceIdx])
           if (prevLines.length > 0) {
             const lastWord = prevLines[prevLines.length - 1][0]
@@ -354,34 +364,41 @@ export default function App() {
 
   // 파형에서 단어 구간 드래그로 변경 시
   const handleWordTimeChange = (wordId, newStart, newEnd) => {
-    console.log('[파형] 단어 시간 변경:', wordId, newStart, '→', newEnd)
-    
-    setSentences(prev => {
-      return prev.map(sentence => ({
+
+    setSentences((prev) => {
+      return prev.map((sentence) => ({
         ...sentence,
-        words: sentence.words?.map(word => {
-          const wId = word.id || word.start_at
-          if (wId === wordId) {
+        words: sentence.words?.map((word) => {
+          const wId = String(word.id || word.start_at)
+          if (wId === String(wordId)) {
             return {
               ...word,
               start_at: newStart,
               end_at: newEnd,
-              // tick 값도 업데이트 (초 → tick 변환)
+              // tick 값도 업데이트 (밀리초 → tick 변환)
               // TICKS_PER_SECOND = 254016000000
-              start_at_tick: BigInt(Math.floor(newStart * 254016000000)),
-              end_at_tick: BigInt(Math.floor(newEnd * 254016000000)),
+              start_at_tick: BigInt(Math.floor((newStart / 1000) * 254016000000)),
+              end_at_tick: BigInt(Math.floor((newEnd / 1000) * 254016000000)),
             }
           }
           return word
-        })
+        }),
       }))
     })
   }
 
-  // 파형에서 클릭으로 재생 위치 이동
+  // 파형에서 클릭으로 재생 위치 이동 + 단어 포커스
   const handleWaveformSeek = async (time) => {
-    console.log('[파형] 재생 위치 이동:', time)
     await setPlayerPosition(time)
+    
+    // 해당 시간의 단어 찾아서 포커스
+    if (timelineIndexRef.current) {
+      const found = findCurrentWordFromIndex(timelineIndexRef.current, time)
+      if (found?.word) {
+        setFocusedWord({ sentenceIdx: found.sentenceIdx, wordIdx: found.wordIdx })
+        setCurrentWordId(found.word.start_at)
+      }
+    }
   }
 
   const handleWordClick = async (word) => {
@@ -492,7 +509,7 @@ export default function App() {
     try {
       // 트랙 잠금 해제
       await setAllTracksLocked(false)
-      
+
       setStatus("백업 중...")
       const backupResult = await backupSequence(formatBackupName())
       if (backupResult?.success)
@@ -504,16 +521,9 @@ export default function App() {
         label: "일괄 적용",
       })
       // 디버그: 선택된 단어들의 tick 확인
-      console.log("[일괄적용] selectedWordIds:", [...selectedWordIds])
-      sentencesRef.current.forEach(s => {
-        s.words?.forEach(w => {
-          const wordId = w.id || w.start_at
-          if (selectedWordIds.has(wordId)) {
-            console.log("[일괄적용] 선택된 단어:", w.text || w.word, "tick:", w.start_at_tick, w.end_at_tick)
-          }
-        })
+      sentencesRef.current.forEach((s) => {
       })
-      
+
       const filterFn = (word) => {
         const wordId = word.id || word.start_at
         return (
@@ -616,12 +626,14 @@ export default function App() {
   // 무음/간투사 단어 목록 계산
   const silenceWordIds = React.useMemo(() => {
     const ids = new Set()
-    sentences.forEach(sentence => {
-      sentence.words?.forEach(word => {
-        if (!word.isDeleted && 
-            word.edit_points?.type === "silence" && 
-            word.start_at_tick !== undefined && 
-            word.end_at_tick !== undefined) {
+    sentences.forEach((sentence) => {
+      sentence.words?.forEach((word) => {
+        if (
+          !word.isDeleted &&
+          word.edit_points?.type === "silence" &&
+          word.start_at_tick !== undefined &&
+          word.end_at_tick !== undefined
+        ) {
           ids.add(word.id || word.start_at)
         }
       })
@@ -631,12 +643,14 @@ export default function App() {
 
   const fillerWordIds = React.useMemo(() => {
     const ids = new Set()
-    sentences.forEach(sentence => {
-      sentence.words?.forEach(word => {
-        if (!word.isDeleted && 
-            FILLER_TYPES.includes(word.edit_points?.type) && 
-            word.start_at_tick !== undefined && 
-            word.end_at_tick !== undefined) {
+    sentences.forEach((sentence) => {
+      sentence.words?.forEach((word) => {
+        if (
+          !word.isDeleted &&
+          FILLER_TYPES.includes(word.edit_points?.type) &&
+          word.start_at_tick !== undefined &&
+          word.end_at_tick !== undefined
+        ) {
           ids.add(word.id || word.start_at)
         }
       })
@@ -645,24 +659,26 @@ export default function App() {
   }, [sentences])
 
   // 모든 무음/간투사가 선택되었는지 확인
-  const allSilenceSelected = silenceWordIds.size > 0 && 
-    [...silenceWordIds].every(id => selectedWordIds.has(id))
-  const allFillerSelected = fillerWordIds.size > 0 && 
-    [...fillerWordIds].every(id => selectedWordIds.has(id))
+  const allSilenceSelected =
+    silenceWordIds.size > 0 &&
+    [...silenceWordIds].every((id) => selectedWordIds.has(id))
+  const allFillerSelected =
+    fillerWordIds.size > 0 &&
+    [...fillerWordIds].every((id) => selectedWordIds.has(id))
 
   const handleSelectSilence = () => {
     if (silenceWordIds.size === 0) {
       setStatus("선택할 무음이 없습니다")
       return
     }
-    
-    setSelectedWordIds(prev => {
+
+    setSelectedWordIds((prev) => {
       const next = new Set(prev)
       if (allSilenceSelected) {
-        silenceWordIds.forEach(id => next.delete(id))
+        silenceWordIds.forEach((id) => next.delete(id))
         setStatus(`무음 ${silenceWordIds.size}개 선택 해제`)
       } else {
-        silenceWordIds.forEach(id => next.add(id))
+        silenceWordIds.forEach((id) => next.add(id))
         setStatus(`무음 ${silenceWordIds.size}개 선택`)
       }
       return next
@@ -706,14 +722,14 @@ export default function App() {
       setStatus("선택할 간투사가 없습니다")
       return
     }
-    
-    setSelectedWordIds(prev => {
+
+    setSelectedWordIds((prev) => {
       const next = new Set(prev)
       if (allFillerSelected) {
-        fillerWordIds.forEach(id => next.delete(id))
+        fillerWordIds.forEach((id) => next.delete(id))
         setStatus(`간투사 ${fillerWordIds.size}개 선택 해제`)
       } else {
-        fillerWordIds.forEach(id => next.add(id))
+        fillerWordIds.forEach((id) => next.add(id))
         setStatus(`간투사 ${fillerWordIds.size}개 선택`)
       }
       return next
@@ -756,7 +772,6 @@ export default function App() {
   }
 
   const handleTranscribeFinish = async (taskId) => {
-    console.log(taskId)
     if (!taskId) return
     setStatus("받아쓰기 결과 가져오는 중...")
     try {
@@ -833,7 +848,6 @@ export default function App() {
       setStatus("타임라인 정보 처리 중...")
       const gapSentences = await initWords(newSentences)
       const lockResult = await setAllTracksLocked(true)
-      console.log("[handleTranscribeFinish] 트랙 잠금 결과:", lockResult)
       setSentences(gapSentences)
       setStatus(`받아쓰기 완료: ${gapSentences.length}개 문장`)
     } catch (e) {
@@ -841,11 +855,16 @@ export default function App() {
     }
   }
 
-  const { uploadFile, onClickRenderAudio, onClickCancel, isUpload, audioPath: uploadedAudioPath } =
-    useAudioUpload({
-      onFinish: handleTranscribeFinish,
-      onClose: () => setStatus("취소됨"),
-    })
+  const {
+    uploadFile,
+    onClickRenderAudio,
+    onClickCancel,
+    isUpload,
+    audioPath: uploadedAudioPath,
+  } = useAudioUpload({
+    onFinish: handleTranscribeFinish,
+    onClose: () => setStatus("취소됨"),
+  })
 
   // audioPath 동기화
   useEffect(() => {
@@ -860,7 +879,7 @@ export default function App() {
 
   // 개발용: taskId로 바로 결과 가져오기
   useEffect(() => {
-    const testTaskId = "b036dae0-7f14-44e7-ac7a-a694ecb33e8f"
+    const testTaskId = "beb194bc-7a91-413d-a49f-8113bfa80d27"
     if (testTaskId && isConnected && sentences.length === 0) {
       handleTranscribeFinish(testTaskId)
     }
@@ -1005,6 +1024,24 @@ export default function App() {
         </Card>
       )}
 
+      {/* 숨겨진 파일 input (파형 테스트용) */}
+      <input
+        type="file"
+        accept="audio/*"
+        style={{ display: "none" }}
+        id="waveform-file-input"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) {
+            // CEP에서는 file.path로 절대 경로 사용
+            const filePath = file.path || URL.createObjectURL(file)
+            setAudioPath(filePath)
+            setStatus(`파형 로드: ${file.name}`)
+          }
+          e.target.value = ""
+        }}
+      />
+
       {/* 액션 버튼 */}
       <div className="flex flex-wrap gap-2 mb-3">
         <Button
@@ -1014,6 +1051,16 @@ export default function App() {
         >
           <Mic className="h-4 w-4 mr-1.5" />
           {isUpload ? "받아쓰는 중..." : "받아쓰기"}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() =>
+            document.getElementById("waveform-file-input")?.click()
+          }
+        >
+          <AudioWaveform className="h-4 w-4 mr-1.5" />
+          파형 보기
         </Button>
         <Button
           variant="secondary"
@@ -1056,6 +1103,7 @@ export default function App() {
                 onWordContextMenu={handleWordContextMenu}
                 onDeleteSentence={handleDeleteSentence}
                 onRestoreSentence={handleRestoreSentence}
+                onSentencePlay={(sIdx, wIdx) => setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })}
                 searchResultsSet={searchResultsSet}
                 currentSearchWordId={currentSearchWordId}
                 wordRefs={wordRefs}
@@ -1068,19 +1116,6 @@ export default function App() {
           )}
         </CardContent>
       </Card>
-
-      {/* 플로팅 버튼 */}
-      <Button
-        className="fixed bottom-5 right-5 z-50 shadow-lg"
-        variant={selectedWordIds.size > 0 ? "default" : "secondary"}
-        disabled={
-          selectedWordIds.size === 0 || !isConnected || isUpload || isProcessing
-        }
-        onClick={handleApplySelected}
-      >
-        <Scissors className="h-4 w-4 mr-2" />
-        시퀀스에 적용 {selectedWordIds.size > 0 && `(${selectedWordIds.size})`}
-      </Button>
 
       {contextMenu && (
         <ContextMenu
@@ -1168,33 +1203,65 @@ export default function App() {
 
       {/* 작업 중 안내 모달 */}
       <Dialog open={showProcessingModal}>
-        <DialogContent className="max-w-sm" onPointerDownOutside={(e) => e.preventDefault()}>
+        <DialogContent
+          className="max-w-sm"
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>⚠️ 작업 중</DialogTitle>
           </DialogHeader>
           <div className="py-4">
             <p className="text-sm text-muted-foreground text-center mb-4">
-              시퀀스에 편집을 적용하고 있습니다.<br />
-              <strong>완료될 때까지 시퀀스를 이동하거나<br />조작하지 마세요!</strong>
+              시퀀스에 편집을 적용하고 있습니다.
+              <br />
+              <strong>
+                완료될 때까지 시퀀스를 이동하거나
+                <br />
+                조작하지 마세요!
+              </strong>
             </p>
             {batchProgress && (
               <div>
                 <div className="flex justify-between mb-2 text-sm">
                   <span>{batchProgress.label}</span>
-                  <span>{batchProgress.current} / {batchProgress.total}</span>
+                  <span>
+                    {batchProgress.current} / {batchProgress.total}
+                  </span>
                 </div>
-                <Progress value={batchProgress.total > 0 ? (batchProgress.current / batchProgress.total) * 100 : 0} />
+                <Progress
+                  value={
+                    batchProgress.total > 0
+                      ? (batchProgress.current / batchProgress.total) * 100
+                      : 0
+                  }
+                />
               </div>
             )}
           </div>
         </DialogContent>
       </Dialog>
 
+      {/* 적용 버튼 */}
+      <div className="flex justify-end mt-2">
+        <Button
+          variant={selectedWordIds.size > 0 ? "default" : "secondary"}
+          size="sm"
+          disabled={
+            selectedWordIds.size === 0 || !isConnected || isUpload || isProcessing
+          }
+          onClick={handleApplySelected}
+        >
+          <Scissors className="h-4 w-4 mr-2" />
+          시퀀스에 적용 {selectedWordIds.size > 0 && `(${selectedWordIds.size})`}
+        </Button>
+      </div>
+
       {/* 하단 파형 패널 */}
       <WaveformPanel
         audioPath={audioPath}
         sentences={sentences}
         currentWordId={currentWordId}
+        currentTime={currentTime}
         focusedWord={focusedWord}
         onWordTimeChange={handleWordTimeChange}
         onSeek={handleWaveformSeek}

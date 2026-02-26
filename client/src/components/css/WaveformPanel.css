@@ -30,40 +30,128 @@
   z-index: 10;
 }
 
-.waveform-container {
-  height: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
+.waveform-time-range {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 11px;
+  color: #888;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 2px 6px;
+  border-radius: 3px;
+  z-index: 10;
 }
 
-/* wavesurfer region 스타일 */
-.waveform-container ::part(region) {
-  border-radius: 2px;
-}
-
-.waveform-container ::part(region-handle) {
-  width: 4px !important;
-  background: rgba(255, 255, 255, 0.5) !important;
-}
-
-.waveform-container ::part(region-handle):hover {
-  background: rgba(255, 255, 255, 0.8) !important;
-}
-
-/* 스크롤바 스타일 */
-.waveform-container::-webkit-scrollbar {
-  height: 8px;
-}
-
-.waveform-container::-webkit-scrollbar-track {
-  background: #2a2a2a;
-}
-
-.waveform-container::-webkit-scrollbar-thumb {
-  background: #555;
+.waveform-zoom-control {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 20;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 4px 8px;
   border-radius: 4px;
 }
 
-.waveform-container::-webkit-scrollbar-thumb:hover {
-  background: #666;
+.waveform-zoom-control span {
+  color: #888;
+  font-size: 14px;
+  user-select: none;
+}
+
+.waveform-zoom-control input[type="range"] {
+  width: 80px;
+  height: 4px;
+  cursor: pointer;
+  accent-color: #ffd700;
+}
+
+.waveform-container {
+  height: 100%;
+  width: 100%;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+}
+
+.waveform-container > div {
+  overflow: visible !important;
+}
+
+/* wavesurfer region 스타일 */
+.waveform-container [part="region"] {
+  border-left: 2px solid rgba(255, 200, 0, 0.8) !important;
+  border-right: 2px solid rgba(255, 200, 0, 0.8) !important;
+  overflow: visible !important;
+}
+
+/* region 리사이즈 핸들 - wavesurfer v6 */
+.waveform-container .wavesurfer-handle {
+  width: 2px !important;
+  background: transparent !important;
+  border-left: 2px dashed rgba(255, 255, 255, 0.7) !important;
+  cursor: ew-resize !important;
+  opacity: 1 !important;
+  z-index: 100 !important;
+  transition: all 0.15s ease !important;
+}
+
+.waveform-container .wavesurfer-handle:hover {
+  width: 6px !important;
+  border-left: 4px dashed rgba(255, 230, 0, 1) !important;
+}
+
+.waveform-container .wavesurfer-handle:active {
+  width: 8px !important;
+  border-left: 4px dashed rgba(255, 200, 0, 1) !important;
+}
+
+/* regions-container의 pointer-events 덮어쓰기 */
+.waveform-container [part="regions-container"] {
+  pointer-events: none !important;
+}
+
+/* region 자체는 이벤트 받음 */
+.waveform-container [part~="region"],
+.waveform-container [part*="region "] {
+  pointer-events: all !important;
+}
+
+/* 핸들도 명시적으로 이벤트 받음 */
+.waveform-container [part*="region-handle"] {
+  pointer-events: all !important;
+}
+
+/* 단어 영역 - 파형 위에 별도 표시 */
+.waveform-container .region-label {
+  position: absolute;
+  top: -20px;
+  font-size: 11px;
+  color: #ccc;
+  white-space: nowrap;
+}
+
+/* 스크롤바 숨기기 */
+.waveform-container::-webkit-scrollbar,
+.waveform-container *::-webkit-scrollbar {
+  display: none;
+}
+
+.waveform-container,
+.waveform-container * {
+  scrollbar-width: none; /* Firefox */
+}
+
+.waveform-panel ::-webkit-scrollbar {
+  display: none;
+}
+
+/* v6 region hover 스타일 */
+.waveform-container .wavesurfer-region {
+  transition: background-color 0.15s ease !important;
+}
+
+.waveform-container .wavesurfer-region:hover {
+  background-color: rgba(255, 230, 0, 0.35) !important;
 }
