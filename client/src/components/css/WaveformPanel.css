@@ -155,3 +155,21 @@
 .waveform-container .wavesurfer-region:hover {
   background-color: rgba(255, 230, 0, 0.35) !important;
 }
+
+/* 🔥 드래그 제한 경계 닿을 때 빨간색 핸들 */
+.waveform-container .wavesurfer-handle.handle-limit {
+  border-left: 4px solid #ff4444 !important;
+  background: rgba(255, 68, 68, 0.3) !important;
+  animation: handle-flash 0.3s ease-out !important;
+}
+
+@keyframes handle-flash {
+  0% {
+    border-left-color: #ff4444;
+    box-shadow: 0 0 8px rgba(255, 68, 68, 0.8);
+  }
+  100% {
+    border-left-color: rgba(255, 255, 255, 0.7);
+    box-shadow: none;
+  }
+}

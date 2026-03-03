@@ -1,4 +1,10 @@
 import React, { forwardRef } from "react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  TooltipProvider,
+} from "./ui/tooltip";
 import "./css/Word.css";
 
 const Word = React.memo(
@@ -35,7 +41,9 @@ const Word = React.memo(
         .filter(Boolean)
         .join(" ");
 
-      return (
+      const reason = word.edit_points?.reason;
+
+      const wordContent = (
         <div
           ref={ref}
           className={classNames}
@@ -45,6 +53,22 @@ const Word = React.memo(
           {word.isEdit ? <div>[...]</div> : <div>{word.text}</div>}
         </div>
       );
+
+      // reason이 있으면 tooltip으로 감싸기
+      if (reason) {
+        return (
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>{wordContent}</TooltipTrigger>
+              <TooltipContent>
+                <p>{reason}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        );
+      }
+
+      return wordContent;
     }
   ),
   (prevProps, nextProps) => {

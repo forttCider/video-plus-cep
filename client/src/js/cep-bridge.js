@@ -3,8 +3,8 @@
  * CSInterface.evalScript()로 ExtendScript 함수 호출
  */
 
-let csInterface = null;
-let extendScriptLoaded = false;
+let csInterface = null
+let extendScriptLoaded = false
 
 /**
  * CSInterface 초기화
@@ -12,12 +12,12 @@ let extendScriptLoaded = false;
 function getCSInterface() {
   if (!csInterface) {
     if (typeof CSInterface !== "undefined") {
-      csInterface = new CSInterface();
+      csInterface = new CSInterface()
     } else {
-      throw new Error("CSInterface를 찾을 수 없습니다. CEP 환경이 아닙니다.");
+      throw new Error("CSInterface를 찾을 수 없습니다. CEP 환경이 아닙니다.")
     }
   }
-  return csInterface;
+  return csInterface
 }
 
 /**
@@ -26,22 +26,22 @@ function getCSInterface() {
 export function loadExtendScript() {
   return new Promise((resolve, reject) => {
     if (extendScriptLoaded) {
-      resolve(true);
-      return;
+      resolve(true)
+      return
     }
-    
+
     try {
-      const cs = getCSInterface();
-      const extPath = cs.getSystemPath(SystemPath.EXTENSION) + "/host/index.jsx";
-      
+      const cs = getCSInterface()
+      const extPath = cs.getSystemPath(SystemPath.EXTENSION) + "/host/index.jsx"
+
       cs.evalScript('$.evalFile("' + extPath + '")', (result) => {
-        extendScriptLoaded = true;
-        resolve(true);
-      });
+        extendScriptLoaded = true
+        resolve(true)
+      })
     } catch (e) {
-      reject(e);
+      reject(e)
     }
-  });
+  })
 }
 
 /**
@@ -52,20 +52,20 @@ export function loadExtendScript() {
  */
 export function registerKeyEvents() {
   try {
-    const cs = getCSInterface();
-    const isMac = navigator.userAgent.indexOf("Mac") !== -1;
-    
+    const cs = getCSInterface()
+    const isMac = navigator.userAgent.indexOf("Mac") !== -1
+
     // 모든 키코드 등록 (0-126) - Premiere 키보드 가로채기 우회
-    const keyEvents = [];
+    const keyEvents = []
     for (let i = 0; i <= 126; i++) {
-      keyEvents.push({ "keyCode": i });
+      keyEvents.push({ keyCode: i })
     }
-    
-    cs.registerKeyEventsInterest(JSON.stringify(keyEvents));
-    return isMac;
+
+    cs.registerKeyEventsInterest(JSON.stringify(keyEvents))
+    return isMac
   } catch (e) {
-    console.error("[CEP] 키보드 이벤트 등록 실패:", e);
-    return false;
+    console.error("[CEP] 키보드 이벤트 등록 실패:", e)
+    return false
   }
 }
 
@@ -75,36 +75,36 @@ export function registerKeyEvents() {
 export function evalScript(script) {
   return new Promise((resolve, reject) => {
     try {
-      const cs = getCSInterface();
+      const cs = getCSInterface()
       cs.evalScript(script, (result) => {
         if (result === "EvalScript error.") {
-          reject(new Error(`ExtendScript 오류: ${script}`));
+          reject(new Error(`ExtendScript 오류: ${script}`))
         } else {
-          resolve(result);
+          resolve(result)
         }
-      });
+      })
     } catch (e) {
-      reject(e);
+      reject(e)
     }
-  });
+  })
 }
 
 /**
  * ExtendScript 함수 호출 + JSON 파싱
  */
 export async function evalJSON(script) {
-  await loadExtendScript();
-  const result = await evalScript(script);
-  
+  await loadExtendScript()
+  const result = await evalScript(script)
+
   if (!result || result === "undefined" || result === "null") {
-    return null;
+    return null
   }
-  
+
   try {
-    return JSON.parse(result);
+    return JSON.parse(result)
   } catch (e) {
-    console.warn("[CEP] JSON 파싱 실패:", result);
-    return result;
+    console.warn("[CEP] JSON 파싱 실패:", result)
+    return result
   }
 }
 
@@ -112,34 +112,34 @@ export async function evalJSON(script) {
  * 시퀀스 정보 가져오기
  */
 export async function getActiveSequenceInfo() {
-  return evalJSON("getActiveSequenceInfo()");
+  return evalJSON("getActiveSequenceInfo()")
 }
 
 /**
  * 연결 테스트
  */
 export async function testConnection() {
-  await loadExtendScript();
-  return evalScript("testConnection()");
+  await loadExtendScript()
+  return evalScript("testConnection()")
 }
 
 /**
  * PluginData 폴더 경로 가져오기
  */
 export function getPluginDataPath() {
-  const cs = getCSInterface();
-  const userDataPath = cs.getSystemPath(SystemPath.USER_DATA);
-  const pluginPath = `${userDataPath}/videoPlus`;
-  return pluginPath;
+  const cs = getCSInterface()
+  const userDataPath = cs.getSystemPath(SystemPath.USER_DATA)
+  const pluginPath = `${userDataPath}/videoPlus`
+  return pluginPath
 }
 
 /**
  * 폴더 생성 (없으면)
  */
 function ensureDir(dirPath) {
-  const fs = require("fs");
+  const fs = require("fs")
   if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
+    fs.mkdirSync(dirPath, { recursive: true })
   }
 }
 
@@ -149,10 +149,10 @@ function ensureDir(dirPath) {
  */
 export async function renderAudio() {
   // PluginData 폴더에 저장
-  const pluginDataPath = getPluginDataPath();
-  ensureDir(pluginDataPath);
-  const outputPath = `${pluginDataPath}/videoplus_audio.wav`;
-  return evalJSON(`renderAudio("${outputPath}")`);
+  const pluginDataPath = getPluginDataPath()
+  ensureDir(pluginDataPath)
+  const outputPath = `${pluginDataPath}/videoplus_audio.wav`
+  return evalJSON(`renderAudio("${outputPath}")`)
 }
 
 /**
@@ -164,24 +164,24 @@ export function readFileAsArrayBuffer(filePath) {
   return new Promise((resolve, reject) => {
     try {
       // CEP에서 Node.js require 사용 가능
-      const fs = require("fs");
-      
+      const fs = require("fs")
+
       fs.readFile(filePath, (err, buffer) => {
         if (err) {
-          reject(err);
-          return;
+          reject(err)
+          return
         }
         // Node.js Buffer → ArrayBuffer
         const arrayBuffer = buffer.buffer.slice(
           buffer.byteOffset,
-          buffer.byteOffset + buffer.byteLength
-        );
-        resolve(arrayBuffer);
-      });
+          buffer.byteOffset + buffer.byteLength,
+        )
+        resolve(arrayBuffer)
+      })
     } catch (e) {
-      reject(e);
+      reject(e)
     }
-  });
+  })
 }
 
 /**
@@ -191,12 +191,12 @@ export function readFileAsArrayBuffer(filePath) {
 export function deleteFile(filePath) {
   return new Promise((resolve) => {
     try {
-      const fs = require("fs");
-      fs.unlink(filePath, () => resolve());
+      const fs = require("fs")
+      fs.unlink(filePath, () => resolve())
     } catch (e) {
-      resolve(); // 삭제 실패해도 무시
+      resolve() // 삭제 실패해도 무시
     }
-  });
+  })
 }
 
 /**
@@ -207,15 +207,15 @@ export function deleteFile(filePath) {
 export function copyFile(src, dest) {
   return new Promise((resolve, reject) => {
     try {
-      const fs = require("fs");
+      const fs = require("fs")
       fs.copyFile(src, dest, (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
+        if (err) reject(err)
+        else resolve()
+      })
     } catch (e) {
-      reject(e);
+      reject(e)
     }
-  });
+  })
 }
 
 /**
@@ -224,78 +224,78 @@ export function copyFile(src, dest) {
  */
 export async function renderAudioAndRead() {
   // 1. 오디오 렌더링
-  const result = await renderAudio();
-  
+  const result = await renderAudio()
+
   if (!result.success) {
-    throw new Error(result.error || "렌더링 실패");
+    throw new Error(result.error || "렌더링 실패")
   }
-  
+
   // 2. 파일을 ArrayBuffer로 읽기
-  const arrayBuffer = await readFileAsArrayBuffer(result.outputPath);
-  
+  const arrayBuffer = await readFileAsArrayBuffer(result.outputPath)
+
   // 3. waveAudio.wav로 복사 (파형용 - 삭제 안 함)
-  const pluginDataPath = getPluginDataPath();
-  const waveAudioPath = `${pluginDataPath}/waveAudio.wav`;
+  const pluginDataPath = getPluginDataPath()
+  const waveAudioPath = `${pluginDataPath}/waveAudio.wav`
   try {
-    await copyFile(result.outputPath, waveAudioPath);
+    await copyFile(result.outputPath, waveAudioPath)
   } catch (e) {
     // 복사 실패해도 계속 진행
   }
-  
+
   // 4. 원본 파일 삭제
-  await deleteFile(result.outputPath);
-  
-  return { arrayBuffer, audioPath: waveAudioPath, waveAudioPath };
+  await deleteFile(result.outputPath)
+
+  return { arrayBuffer, audioPath: waveAudioPath, waveAudioPath }
 }
 
 /**
  * 시퀀스 프레임레이트 가져오기
  */
 export async function getSequenceFramerate() {
-  return evalJSON("getSequenceFramerate()");
+  return evalJSON("getSequenceFramerate()")
 }
 
 /**
  * 비디오 트랙 0번 클립 정보 가져오기
  */
 export async function getVideoTrackItems() {
-  return evalJSON("getVideoTrackItems()");
+  return evalJSON("getVideoTrackItems()")
 }
 
 /**
  * 플레이헤드 위치 설정 (초 단위)
  */
 export async function setPlayerPosition(seconds) {
-  return evalJSON(`setPlayerPosition(${seconds})`);
+  return evalJSON(`setPlayerPosition(${seconds})`)
 }
 
 /**
  * 플레이헤드 위치 설정 (tick 단위, 정밀도 손실 없음)
  */
 export async function setPlayerPositionByTicks(ticks) {
-  return evalJSON(`setPlayerPositionByTicks("${ticks}")`);
+  return evalJSON(`setPlayerPositionByTicks("${ticks}")`)
 }
 
 /**
  * 플레이헤드 위치 가져오기 (초 단위)
  */
 export async function getPlayerPosition() {
-  return evalJSON(`getPlayerPosition()`);
+  return evalJSON(`getPlayerPosition()`)
 }
 
 /**
  * 프로젝트 경로 가져오기
  */
 export async function getProjectPath() {
-  return evalJSON(`getProjectPath()`);
+  return evalJSON(`getProjectPath()`)
 }
 
 /**
  * 시퀀스 백업 (bin 폴더에 복제)
  */
 export async function backupSequence(backupName) {
-  const nameArg = backupName ? `"${backupName}"` : '""';
-  return evalJSON(`backupSequence(${nameArg})`);
+  const nameArg = backupName ? `"${backupName}"` : '""'
+  return evalJSON(`backupSequence(${nameArg})`)
 }
 
 /**
@@ -306,41 +306,46 @@ export async function backupSequence(backupName) {
 export async function saveWordsData(backupId, sentences) {
   try {
     // 삭제된 단어 및 문장 id 목록 추출
-    const deletedWords = [];
-    const deletedSentences = [];
-    
+    const deletedWords = []
+    const deletedSentences = []
+
     for (const sentence of sentences) {
       if (sentence.isDeleted && sentence.id) {
-        deletedSentences.push(sentence.id);
+        deletedSentences.push(sentence.id)
       }
       if (sentence.words) {
         for (const word of sentence.words) {
           if (word.isDeleted && word.id) {
-            deletedWords.push(word.id);
+            deletedWords.push(word.id)
           }
         }
       }
     }
-    
-    const jsonData = JSON.stringify({ deletedWords, deletedSentences });
-    
+
+    const jsonData = JSON.stringify({ deletedWords, deletedSentences })
+
     // 백업 시퀀스의 sequenceId 찾기
-    const backupSeqResult = await evalJSON(`getBackupSequenceId("${backupId}")`);
+    const backupSeqResult = await evalJSON(`getBackupSequenceId("${backupId}")`)
     if (!backupSeqResult?.success) {
-      console.error("[saveWordsData] 백업 시퀀스 찾기 실패:", backupSeqResult?.error);
-      return { success: false, error: backupSeqResult?.error };
+      console.error(
+        "[saveWordsData] 백업 시퀀스 찾기 실패:",
+        backupSeqResult?.error,
+      )
+      return { success: false, error: backupSeqResult?.error }
     }
-    
-    const sequenceId = backupSeqResult.sequenceId;
-    
+
+    const sequenceId = backupSeqResult.sequenceId
+
     // XMP에 저장 (JSON 문자열 이스케이프)
-    const escapedJson = jsonData.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const result = await evalJSON(`saveWordsToSequence("${escapedJson}", "${sequenceId}")`);
-    
-    return result;
+    const escapedJson = jsonData.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+    const result = await evalJSON(
+      `saveWordsToSequence("${escapedJson}", "${sequenceId}")`,
+    )
+
+    return result
   } catch (e) {
-    console.error("[saveWordsData] 예외:", e);
-    return { success: false, error: e.message };
+    console.error("[saveWordsData] 예외:", e)
+    return { success: false, error: e.message }
   }
 }
 
@@ -351,28 +356,31 @@ export async function saveWordsData(backupId, sentences) {
 export async function loadWordsData(backupId) {
   try {
     // 백업 시퀀스의 sequenceId 찾기
-    const backupSeqResult = await evalJSON(`getBackupSequenceId("${backupId}")`);
+    const backupSeqResult = await evalJSON(`getBackupSequenceId("${backupId}")`)
     if (!backupSeqResult?.success) {
-      console.error("[loadWordsData] 백업 시퀀스 찾기 실패:", backupSeqResult?.error);
-      return { success: false, error: backupSeqResult?.error };
+      console.error(
+        "[loadWordsData] 백업 시퀀스 찾기 실패:",
+        backupSeqResult?.error,
+      )
+      return { success: false, error: backupSeqResult?.error }
     }
-    
-    const sequenceId = backupSeqResult.sequenceId;
-    
+
+    const sequenceId = backupSeqResult.sequenceId
+
     // XMP에서 읽기
-    const result = await evalJSON(`loadWordsFromSequence("${sequenceId}")`);
-    
+    const result = await evalJSON(`loadWordsFromSequence("${sequenceId}")`)
+
     if (result?.success && result.data) {
-      const deletedWords = result.data.deletedWords || [];
-      const deletedSentences = result.data.deletedSentences || [];
-      return { success: true, deletedWords, deletedSentences };
+      const deletedWords = result.data.deletedWords || []
+      const deletedSentences = result.data.deletedSentences || []
+      return { success: true, deletedWords, deletedSentences }
     }
-    
-    console.error("[loadWordsData] XMP 읽기 실패:", result?.error);
-    return { success: false, error: result?.error || "데이터 없음" };
+
+    console.error("[loadWordsData] XMP 읽기 실패:", result?.error)
+    return { success: false, error: result?.error || "데이터 없음" }
   } catch (e) {
-    console.error("[loadWordsData] 예외:", e);
-    return { success: false, error: e.message };
+    console.error("[loadWordsData] 예외:", e)
+    return { success: false, error: e.message }
   }
 }
 
@@ -380,14 +388,14 @@ export async function loadWordsData(backupId) {
  * 백업 목록 가져오기
  */
 export async function getBackupList() {
-  return evalJSON(`getBackupList()`);
+  return evalJSON(`getBackupList()`)
 }
 
 /**
  * 백업 시퀀스 열기
  */
 export async function openBackupSequence(backupId) {
-  return evalJSON(`openBackupSequence("${backupId}")`);
+  return evalJSON(`openBackupSequence("${backupId}")`)
 }
 
 /**
@@ -396,7 +404,7 @@ export async function openBackupSequence(backupId) {
  * - 현재 시퀀스는 Archive 폴더로 이동
  */
 export async function restoreFromBackup(backupId) {
-  return evalJSON(`restoreFromBackup("${backupId}")`);
+  return evalJSON(`restoreFromBackup("${backupId}")`)
 }
 
 /**
@@ -406,7 +414,9 @@ export async function restoreFromBackup(backupId) {
  * @param {number} trackIndex - 트랙 인덱스 (기본 0)
  */
 export async function deleteTimeRange(startTicks, endTicks, trackIndex = 0) {
-  return evalJSON(`deleteTimeRange("${startTicks}", "${endTicks}", ${trackIndex})`);
+  return evalJSON(
+    `deleteTimeRange("${startTicks}", "${endTicks}", ${trackIndex})`,
+  )
 }
 
 /**
@@ -415,7 +425,7 @@ export async function deleteTimeRange(startTicks, endTicks, trackIndex = 0) {
  * @param {number} endSec - 끝 시간 (초)
  */
 export async function razorDeleteAllTracks(startSec, endSec) {
-  return evalJSON(`razorDeleteAllTracks(${startSec}, ${endSec})`);
+  return evalJSON(`razorDeleteAllTracks(${startSec}, ${endSec})`)
 }
 
 /**
@@ -424,7 +434,7 @@ export async function razorDeleteAllTracks(startSec, endSec) {
  * @param {string} endTicks - 끝 시간 (ticks 문자열)
  */
 export async function razorDeleteAllTracksTicks(startTicks, endTicks) {
-  return evalJSON(`razorDeleteAllTracksTicks("${startTicks}", "${endTicks}")`);
+  return evalJSON(`razorDeleteAllTracksTicks("${startTicks}", "${endTicks}")`)
 }
 
 /**
@@ -432,8 +442,13 @@ export async function razorDeleteAllTracksTicks(startTicks, endTicks) {
  * @param {string} sourceInPointTicks - 소스 미디어 시작 ticks
  * @param {string} sourceOutPointTicks - 소스 미디어 끝 ticks
  */
-export async function deleteWordBySourceTicks(sourceInPointTicks, sourceOutPointTicks) {
-  return evalJSON(`deleteWordBySourceTicks("${sourceInPointTicks}", "${sourceOutPointTicks}")`);
+export async function deleteWordBySourceTicks(
+  sourceInPointTicks,
+  sourceOutPointTicks,
+) {
+  return evalJSON(
+    `deleteWordBySourceTicks("${sourceInPointTicks}", "${sourceOutPointTicks}")`,
+  )
 }
 
 /**
@@ -441,8 +456,13 @@ export async function deleteWordBySourceTicks(sourceInPointTicks, sourceOutPoint
  * @param {string} timelineStartTicks - 타임라인 시작 ticks
  * @param {string} timelineEndTicks - 타임라인 끝 ticks
  */
-export async function deleteWordByTimelineTicks(timelineStartTicks, timelineEndTicks) {
-  return evalJSON(`deleteWordByTimelineTicks("${timelineStartTicks}", "${timelineEndTicks}")`);
+export async function deleteWordByTimelineTicks(
+  timelineStartTicks,
+  timelineEndTicks,
+) {
+  return evalJSON(
+    `deleteWordByTimelineTicks("${timelineStartTicks}", "${timelineEndTicks}")`,
+  )
 }
 
 /**
@@ -452,7 +472,9 @@ export async function deleteWordByTimelineTicks(timelineStartTicks, timelineEndT
  * @param {string} gapTicks - 누적 gap ticks
  */
 export async function restoreWordTicks(startTicks, endTicks, gapTicks) {
-  return evalJSON(`restoreWordTicks("${startTicks}", "${endTicks}", "${gapTicks}")`);
+  return evalJSON(
+    `restoreWordTicks("${startTicks}", "${endTicks}", "${gapTicks}")`,
+  )
 }
 
 /**
@@ -460,8 +482,13 @@ export async function restoreWordTicks(startTicks, endTicks, gapTicks) {
  * @param {string} razorInPointTicks - razor 지점의 소스 미디어 inPoint
  * @param {string} razorOutPointTicks - razor 지점의 소스 미디어 outPoint
  */
-export async function restoreWordByRazorTicks(razorInPointTicks, razorOutPointTicks) {
-  return evalJSON(`restoreWordByRazorTicks("${razorInPointTicks}", "${razorOutPointTicks}")`);
+export async function restoreWordByRazorTicks(
+  razorInPointTicks,
+  razorOutPointTicks,
+) {
+  return evalJSON(
+    `restoreWordByRazorTicks("${razorInPointTicks}", "${razorOutPointTicks}")`,
+  )
 }
 
 /**
@@ -470,7 +497,9 @@ export async function restoreWordByRazorTicks(razorInPointTicks, razorOutPointTi
  * @param {string} rightInPoint - 오른쪽 클립의 inPoint ticks
  */
 export async function restoreWordByActualTicks(leftOutPoint, rightInPoint) {
-  return evalJSON(`restoreWordByActualTicks("${leftOutPoint}", "${rightInPoint}")`);
+  return evalJSON(
+    `restoreWordByActualTicks("${leftOutPoint}", "${rightInPoint}")`,
+  )
 }
 
 /**
@@ -479,8 +508,14 @@ export async function restoreWordByActualTicks(leftOutPoint, rightInPoint) {
  * @param {string} sourceOutTicks - 복원할 구간의 소스 끝 ticks (= actualRightInPoint)
  * @param {string} durationTicks - 복원할 duration (ticks 문자열) - 정확한 BigInt 값
  */
-export async function restoreWordByOverwrite(sourceInTicks, sourceOutTicks, durationTicks) {
-  return evalJSON(`restoreWordByOverwrite("${sourceInTicks}", "${sourceOutTicks}", "${durationTicks}")`);
+export async function restoreWordByOverwrite(
+  sourceInTicks,
+  sourceOutTicks,
+  durationTicks,
+) {
+  return evalJSON(
+    `restoreWordByOverwrite("${sourceInTicks}", "${sourceOutTicks}", "${durationTicks}")`,
+  )
 }
 
 /**
@@ -490,29 +525,36 @@ export async function restoreWordByOverwrite(sourceInTicks, sourceOutTicks, dura
  * @param {string} durationTC - 복원할 duration timecode
  * @param {string} timelinePositionTC - 타임라인 삽입 위치 timecode (insertClip 용)
  */
-export async function restoreWordByTimecode(sourceInTC, sourceOutTC, durationTC, timelinePositionTC) {
-  return evalJSON(`restoreWordByTimecode("${sourceInTC}", "${sourceOutTC}", "${durationTC}", "${timelinePositionTC}")`);
+export async function restoreWordByTimecode(
+  sourceInTC,
+  sourceOutTC,
+  durationTC,
+  timelinePositionTC,
+) {
+  return evalJSON(
+    `restoreWordByTimecode("${sourceInTC}", "${sourceOutTC}", "${durationTC}", "${timelinePositionTC}")`,
+  )
 }
 
 /**
  * Clone API 검사 (CEP ExtendScript에서 clone/duplicate 메서드 확인)
  */
 export async function inspectCloneAPI() {
-  return evalJSON("inspectCloneAPI()");
+  return evalJSON("inspectCloneAPI()")
 }
 
 /**
  * executeCommand 메서드 확인
  */
 export async function findExecuteCommand() {
-  return evalJSON("findExecuteCommand()");
+  return evalJSON("findExecuteCommand()")
 }
 
 /**
  * Essential Sound / 프리셋 API 확인
  */
 export async function inspectEssentialSound() {
-  return evalJSON("inspectEssentialSound()");
+  return evalJSON("inspectEssentialSound()")
 }
 
 /**
@@ -520,7 +562,7 @@ export async function inspectEssentialSound() {
  * @param {string} outputPath - XML 파일 저장 경로
  */
 export async function exportSequenceAsXML(outputPath) {
-  return evalJSON(`exportSequenceAsXML("${outputPath.replace(/\\/g, "\\\\")}")`);
+  return evalJSON(`exportSequenceAsXML("${outputPath.replace(/\\/g, "\\\\")}")`)
 }
 
 /**
@@ -528,7 +570,7 @@ export async function exportSequenceAsXML(outputPath) {
  * @param {string} xmlPath - XML 파일 경로
  */
 export async function importXMLSequence(xmlPath) {
-  return evalJSON(`importXMLSequence("${xmlPath.replace(/\\/g, "\\\\")}")`);
+  return evalJSON(`importXMLSequence("${xmlPath.replace(/\\/g, "\\\\")}")`)
 }
 
 /**
@@ -536,21 +578,21 @@ export async function importXMLSequence(xmlPath) {
  * @param {string} xmlPath - XML 파일 경로
  */
 export async function importXMLAndOpen(xmlPath) {
-  return evalJSON(`importXMLAndOpen("${xmlPath.replace(/\\/g, "\\\\")}")`);
+  return evalJSON(`importXMLAndOpen("${xmlPath.replace(/\\/g, "\\\\")}")`)
 }
 
 /**
  * 시퀀스 ID로 시퀀스 열기
  */
 export async function openSequenceById(sequenceId) {
-  return evalJSON(`openSequenceById("${sequenceId}")`);
+  return evalJSON(`openSequenceById("${sequenceId}")`)
 }
 
 /**
  * 프로젝트의 모든 시퀀스 목록 가져오기
  */
 export async function listSequences() {
-  return evalJSON("listSequences()");
+  return evalJSON("listSequences()")
 }
 
 /**
@@ -559,28 +601,28 @@ export async function listSequences() {
 export function readXMLFile(filePath) {
   return new Promise((resolve, reject) => {
     try {
-      const fs = require("fs");
+      const fs = require("fs")
       fs.readFile(filePath, "utf8", (err, data) => {
-        if (err) reject(err);
+        if (err) reject(err)
         else {
           // BOM 제거 + trim
-          let cleaned = data;
-          if (cleaned.charCodeAt(0) === 0xFEFF) {
-            cleaned = cleaned.slice(1);
+          let cleaned = data
+          if (cleaned.charCodeAt(0) === 0xfeff) {
+            cleaned = cleaned.slice(1)
           }
-          cleaned = cleaned.trim();
+          cleaned = cleaned.trim()
           // <?xml이 맨 앞에 오도록
-          const xmlIndex = cleaned.indexOf("<?xml");
+          const xmlIndex = cleaned.indexOf("<?xml")
           if (xmlIndex > 0) {
-            cleaned = cleaned.slice(xmlIndex);
+            cleaned = cleaned.slice(xmlIndex)
           }
-          resolve(cleaned);
+          resolve(cleaned)
         }
-      });
+      })
     } catch (e) {
-      reject(e);
+      reject(e)
     }
-  });
+  })
 }
 
 /**
@@ -589,22 +631,22 @@ export function readXMLFile(filePath) {
 export function writeXMLFile(filePath, content) {
   return new Promise((resolve, reject) => {
     try {
-      const fs = require("fs");
+      const fs = require("fs")
       fs.writeFile(filePath, content, "utf8", (err) => {
-        if (err) reject(err);
-        else resolve(true);
-      });
+        if (err) reject(err)
+        else resolve(true)
+      })
     } catch (e) {
-      reject(e);
+      reject(e)
     }
-  });
+  })
 }
 
 /**
  * Adjustment Layer 정보 가져오기
  */
 export async function getAdjustmentLayerInfo() {
-  return evalJSON("getAdjustmentLayerInfo()");
+  return evalJSON("getAdjustmentLayerInfo()")
 }
 
 /**
@@ -612,21 +654,21 @@ export async function getAdjustmentLayerInfo() {
  * @param {string} filePath - adjustment_layers.json 파일 경로
  */
 export async function insertAdjustmentLayers(filePath) {
-  return evalJSON(`insertAdjustmentLayers('${filePath}')`);
+  return evalJSON(`insertAdjustmentLayers('${filePath}')`)
 }
 
 /**
  * 재생/정지 토글
  */
 export async function togglePlayback() {
-  return evalJSON(`togglePlayback()`);
+  return evalJSON(`togglePlayback()`)
 }
 
 /**
  * 재생 상태 확인
  */
 export async function isPlaying() {
-  return evalJSON(`isPlaying()`);
+  return evalJSON(`isPlaying()`)
 }
 
 /**
@@ -634,5 +676,5 @@ export async function isPlaying() {
  * @param {boolean} lock - true면 잠금, false면 해제
  */
 export async function setAllTracksLocked(lock) {
-  return evalJSON(`setAllTracksLocked(${lock})`);
+  return evalJSON(`setAllTracksLocked(${lock})`)
 }

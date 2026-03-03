@@ -5,7 +5,7 @@ Premiere Pro CEP 확장 - 음성 받아쓰기 + 자막 편집 + 무음/간투사
 ## 구조
 
 ```
-videoPlusCEP/
+videoPlus/
 ├── CSXS/manifest.xml        # CEP 매니페스트 (PPro 25.x ~ 26.x)
 ├── client/                   # React 프론트엔드
 │   ├── public/index.html

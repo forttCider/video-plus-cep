@@ -46,6 +46,8 @@ import {
   getTimelinePositionTick,
   buildTimelineIndex,
   findCurrentWordFromIndex,
+  getOriginalTimeFromTimeline,
+  getTimelineTimeFromOriginal,
 } from "../js/calculateTimeOffset"
 import { deleteWordFromTimeline } from "../js/deleteWord"
 import { restoreWordFromTimeline } from "../js/restoreWord"
@@ -86,7 +88,9 @@ export default function App() {
   const [focusedWord, setFocusedWord] = useState(null)
   const [audioPath, setAudioPath] = useState(null) // 파형 표시용 오디오 경로
   const [showProcessingModal, setShowProcessingModal] = useState(false)
+  const [isLoadingResult, setIsLoadingResult] = useState(false) // 결과 로딩 중
   const [currentTime, setCurrentTime] = useState(0) // 현재 재생 위치 (초)
+  const [isPlayingState, setIsPlayingState] = useState(false) // 재생 상태
   const wordRefs = useRef({})
   const sentencesRef = useRef(sentences)
   const timelineIndexRef = useRef(null)
@@ -111,7 +115,9 @@ export default function App() {
     const pollInterval = setInterval(async () => {
       try {
         const playingResult = await isPlaying()
-        if (!playingResult?.isPlaying) {
+        const nowPlaying = playingResult?.isPlaying || false
+        setIsPlayingState(nowPlaying)
+        if (!nowPlaying) {
           // 재생 멈춤 - currentWordId는 유지 (노란색 배경 유지)
           return
         }
@@ -364,7 +370,6 @@ export default function App() {
 
   // 파형에서 단어 구간 드래그로 변경 시
   const handleWordTimeChange = (wordId, newStart, newEnd) => {
-
     setSentences((prev) => {
       return prev.map((sentence) => ({
         ...sentence,
@@ -377,7 +382,9 @@ export default function App() {
               end_at: newEnd,
               // tick 값도 업데이트 (밀리초 → tick 변환)
               // TICKS_PER_SECOND = 254016000000
-              start_at_tick: BigInt(Math.floor((newStart / 1000) * 254016000000)),
+              start_at_tick: BigInt(
+                Math.floor((newStart / 1000) * 254016000000),
+              ),
               end_at_tick: BigInt(Math.floor((newEnd / 1000) * 254016000000)),
             }
           }
@@ -389,13 +396,21 @@ export default function App() {
 
   // 파형에서 클릭으로 재생 위치 이동 + 단어 포커스
   const handleWaveformSeek = async (time) => {
-    await setPlayerPosition(time)
-    
-    // 해당 시간의 단어 찾아서 포커스
+    // 원본 오디오 시간 → 타임라인 시간 변환
+    const timelineTime = getTimelineTimeFromOriginal(time)
+    await setPlayerPosition(timelineTime)
+
+    // 해당 시간의 단어 찾아서 포커스 (타임라인 시간 기준)
     if (timelineIndexRef.current) {
-      const found = findCurrentWordFromIndex(timelineIndexRef.current, time)
+      const found = findCurrentWordFromIndex(
+        timelineIndexRef.current,
+        timelineTime,
+      )
       if (found?.word) {
-        setFocusedWord({ sentenceIdx: found.sentenceIdx, wordIdx: found.wordIdx })
+        setFocusedWord({
+          sentenceIdx: found.sentenceIdx,
+          wordIdx: found.wordIdx,
+        })
         setCurrentWordId(found.word.start_at)
       }
     }
@@ -521,8 +536,7 @@ export default function App() {
         label: "일괄 적용",
       })
       // 디버그: 선택된 단어들의 tick 확인
-      sentencesRef.current.forEach((s) => {
-      })
+      sentencesRef.current.forEach((s) => {})
 
       const filterFn = (word) => {
         const wordId = word.id || word.start_at
@@ -774,6 +788,7 @@ export default function App() {
   const handleTranscribeFinish = async (taskId) => {
     if (!taskId) return
     setStatus("받아쓰기 결과 가져오는 중...")
+    // console.log(taskId)
     try {
       const response = await fetch(`${API_URL}/transcribe/cut/${taskId}`)
       if (!response.ok) {
@@ -855,6 +870,19 @@ export default function App() {
     }
   }
 
+  // 🔥 완전 초기화 함수
+  const resetAllState = () => {
+    setAudioPath(null)
+    setSentences([])
+    setCurrentWordId(null)
+    setSelectedWordIds(new Set())
+    setFocusedWord(null)
+    setCurrentTime(0)
+    setIsPlayingState(false)
+    sentencesRef.current = []
+    timelineIndexRef.current = null
+  }
+
   const {
     uploadFile,
     onClickRenderAudio,
@@ -863,14 +891,24 @@ export default function App() {
     audioPath: uploadedAudioPath,
   } = useAudioUpload({
     onFinish: handleTranscribeFinish,
-    onClose: () => setStatus("취소됨"),
+    onClose: () => {
+      setStatus("취소됨")
+      resetAllState()
+    },
+    onStart: () => {
+      // 다시 받아쓰기 시 기존 데이터 초기화
+      setSentences([])
+      setCurrentWordId(null)
+      setSelectedWordIds(new Set())
+      setFocusedWord(null)
+      sentencesRef.current = []
+      timelineIndexRef.current = null
+    },
   })
 
-  // audioPath 동기화
+  // audioPath 동기화 (null도 처리)
   useEffect(() => {
-    if (uploadedAudioPath) {
-      setAudioPath(uploadedAudioPath)
-    }
+    setAudioPath(uploadedAudioPath || null)
   }, [uploadedAudioPath])
 
   useEffect(() => {
@@ -878,12 +916,12 @@ export default function App() {
   }, [])
 
   // 개발용: taskId로 바로 결과 가져오기
-  useEffect(() => {
-    const testTaskId = "beb194bc-7a91-413d-a49f-8113bfa80d27"
-    if (testTaskId && isConnected && sentences.length === 0) {
-      handleTranscribeFinish(testTaskId)
-    }
-  }, [isConnected])
+  // useEffect(() => {
+  //   const testTaskId = "174ab96b-650b-4f1c-9c4c-247fd132ae82"
+  //   if (testTaskId && isConnected && sentences.length === 0) {
+  //     handleTranscribeFinish(testTaskId)
+  //   }
+  // }, [isConnected])
 
   const checkConnection = async () => {
     try {
@@ -1025,7 +1063,7 @@ export default function App() {
       )}
 
       {/* 숨겨진 파일 input (파형 테스트용) */}
-      <input
+      {/* <input
         type="file"
         accept="audio/*"
         style={{ display: "none" }}
@@ -1040,7 +1078,7 @@ export default function App() {
           }
           e.target.value = ""
         }}
-      />
+      /> */}
 
       {/* 액션 버튼 */}
       <div className="flex flex-wrap gap-2 mb-3">
@@ -1050,9 +1088,13 @@ export default function App() {
           onClick={onClickRenderAudio}
         >
           <Mic className="h-4 w-4 mr-1.5" />
-          {isUpload ? "받아쓰는 중..." : "받아쓰기"}
+          {isUpload
+            ? "받아쓰는 중..."
+            : sentences.length > 0
+              ? "다시 받아쓰기"
+              : "받아쓰기"}
         </Button>
-        <Button
+        {/* <Button
           variant="secondary"
           size="sm"
           onClick={() =>
@@ -1061,27 +1103,37 @@ export default function App() {
         >
           <AudioWaveform className="h-4 w-4 mr-1.5" />
           파형 보기
-        </Button>
+        </Button> */}
         <Button
           variant="secondary"
           size="sm"
+          className={
+            allSilenceSelected ? "border border-[#ffa500] text-[#ffa500]" : ""
+          }
           disabled={
             !isConnected || isUpload || isProcessing || sentences.length === 0
           }
           onClick={handleSelectSilence}
         >
-          <VolumeX className="h-4 w-4 mr-1.5" />
+          <VolumeX
+            className={`h-4 w-4 mr-1.5 ${allSilenceSelected ? "text-[#ffa500]" : ""}`}
+          />
           {allSilenceSelected ? "무음 선택해제" : "무음 선택"}
         </Button>
         <Button
           variant="secondary"
           size="sm"
+          className={
+            allFillerSelected ? "border border-[#ffa500] text-[#ffa500]" : ""
+          }
           disabled={
             !isConnected || isUpload || isProcessing || sentences.length === 0
           }
           onClick={handleSelectFiller}
         >
-          <MessageCircle className="h-4 w-4 mr-1.5" />
+          <MessageCircle
+            className={`h-4 w-4 mr-1.5 ${allFillerSelected ? "text-[#ffa500]" : ""}`}
+          />
           {allFillerSelected ? "간투사 선택해제" : "간투사 선택"}
         </Button>
       </div>
@@ -1089,7 +1141,13 @@ export default function App() {
       {/* 문장 목록 */}
       <Card className="flex-1 overflow-hidden">
         <CardContent className="p-3 overflow-y-auto h-full">
-          {sentences.length > 0 ? (
+          {isUpload || isLoadingResult ? (
+            <div className="text-muted-foreground text-center py-8">
+              <div className="animate-pulse">
+                <p className="text-base">받아쓰는 중...</p>
+              </div>
+            </div>
+          ) : sentences.length > 0 ? (
             sentences.map((sentence, sentenceIdx) => (
               <Sentence
                 key={sentence.id}
@@ -1103,7 +1161,9 @@ export default function App() {
                 onWordContextMenu={handleWordContextMenu}
                 onDeleteSentence={handleDeleteSentence}
                 onRestoreSentence={handleRestoreSentence}
-                onSentencePlay={(sIdx, wIdx) => setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })}
+                onSentencePlay={(sIdx, wIdx) =>
+                  setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
+                }
                 searchResultsSet={searchResultsSet}
                 currentSearchWordId={currentSearchWordId}
                 wordRefs={wordRefs}
@@ -1247,12 +1307,16 @@ export default function App() {
           variant={selectedWordIds.size > 0 ? "default" : "secondary"}
           size="sm"
           disabled={
-            selectedWordIds.size === 0 || !isConnected || isUpload || isProcessing
+            selectedWordIds.size === 0 ||
+            !isConnected ||
+            isUpload ||
+            isProcessing
           }
           onClick={handleApplySelected}
         >
           <Scissors className="h-4 w-4 mr-2" />
-          시퀀스에 적용 {selectedWordIds.size > 0 && `(${selectedWordIds.size})`}
+          시퀀스에 적용{" "}
+          {selectedWordIds.size > 0 && `(${selectedWordIds.size})`}
         </Button>
       </div>
 
@@ -1261,10 +1325,12 @@ export default function App() {
         audioPath={audioPath}
         sentences={sentences}
         currentWordId={currentWordId}
-        currentTime={currentTime}
+        currentTime={getOriginalTimeFromTimeline(currentTime)}
         focusedWord={focusedWord}
         onWordTimeChange={handleWordTimeChange}
         onSeek={handleWaveformSeek}
+        isPlaying={isPlayingState}
+        isUpload={isUpload}
       />
     </div>
   )
