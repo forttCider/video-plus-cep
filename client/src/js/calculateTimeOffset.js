@@ -44,15 +44,23 @@ export function buildTimelineIndex(sentences) {
     if (word.isDeleted) {
       const startTick = BigInt(word.start_at_tick || 0);
       const endTick = BigInt(word.end_at_tick || 0);
-      const durationTick = endTick - startTick;
-      
-      // 삭제 구간 저장 (tick 기반 - BigInt)
-      deletedIntervals.push({
-        startTick,
-        endTick,
-        durationTick,
-      });
-      
+      const gapTick = BigInt(word.gapAfterTick || 0);
+      const durationTick = endTick - startTick + gapTick;
+
+      // 삭제 구간 저장 (연속 구간 병합 — gap 포함)
+      const lastInterval = deletedIntervals[deletedIntervals.length - 1];
+      if (lastInterval && lastInterval.endTick >= startTick) {
+        // 이전 구간과 연속 → 확장
+        lastInterval.endTick = endTick + gapTick;
+        lastInterval.durationTick = lastInterval.endTick - lastInterval.startTick;
+      } else {
+        deletedIntervals.push({
+          startTick,
+          endTick: endTick + gapTick,
+          durationTick,
+        });
+      }
+
       accumulatedOffsetTick += durationTick;
       continue;
     }
@@ -110,9 +118,6 @@ export function getTimelinePosition(targetWord, sentences) {
   let accumulatedOffset = 0;
 
   const words = sentences.flatMap((item) => item.words);
-  
-  // 삭제된 단어 확인 (디버그)
-  const deletedWords = words.filter((w) => w.isDeleted);
 
   // 시간순 정렬 (start_at_sec 기준)
   const sortedWords = [...words].sort((a, b) => {
@@ -137,7 +142,9 @@ export function getTimelinePosition(targetWord, sentences) {
     }
 
     if (word.isDeleted) {
-      accumulatedOffset += word.end_at_sec - word.start_at_sec;
+      const wordDuration = word.end_at_sec - word.start_at_sec;
+      const gapSec = Number(BigInt(word.gapAfterTick || 0)) / TICKS_PER_SECOND;
+      accumulatedOffset += wordDuration + gapSec;
     }
   }
 
@@ -151,12 +158,6 @@ export function getTimelinePositionTick(targetWord, sentences) {
   let accumulatedOffsetTick = 0n;
 
   const words = sentences.flatMap((item) => item.words);
-  
-  // 디버그: 삭제된 단어 목록
-  const deletedWords = words.filter(w => w.isDeleted);
-  deletedWords.forEach((w, i) => {
-    const dur = BigInt(w.end_at_tick || 0) - BigInt(w.start_at_tick || 0);
-  });
 
   // 시간순 정렬 (start_at_tick 기준)
   const sortedWords = [...words].sort((a, b) => {
@@ -180,8 +181,9 @@ export function getTimelinePositionTick(targetWord, sentences) {
     }
 
     if (word.isDeleted && word.start_at_tick && word.end_at_tick) {
+      const gapTick = BigInt(word.gapAfterTick || 0);
       accumulatedOffsetTick +=
-        BigInt(word.end_at_tick) - BigInt(word.start_at_tick);
+        BigInt(word.end_at_tick) - BigInt(word.start_at_tick) + gapTick;
     }
   }
 
@@ -202,16 +204,16 @@ export function getOriginalTimeFromTimeline(timelineSec) {
   // 🔥 tick 기반 계산 (BigInt 정밀도)
   const timelineTick = BigInt(Math.floor(timelineSec * TICKS_PER_SECOND));
   let totalDeletedTick = 0n;
-  
+
   for (const interval of deletedIntervalsCache) {
     // 타임라인 tick + 지금까지 삭제된 tick = 원본 tick 추정
     const estimatedOriginalTick = timelineTick + totalDeletedTick;
-    
+
     // 이 삭제 구간보다 앞에 있으면 중단
     if (estimatedOriginalTick < interval.startTick) {
       break;
     }
-    
+
     // 이 삭제 구간을 지났으면 duration 누적
     totalDeletedTick += interval.durationTick;
   }

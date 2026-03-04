@@ -18,15 +18,9 @@ const Word = React.memo(
         isSearchMatch,
         isCurrentSearchMatch,
         onClick,
-        onContextMenu,
       },
       ref
     ) => {
-      const handleContextMenu = (e) => {
-        e.preventDefault();
-        onContextMenu(e);
-      };
-
       const classNames = [
         "word",
         "word-normal",
@@ -48,7 +42,6 @@ const Word = React.memo(
           ref={ref}
           className={classNames}
           onClick={onClick}
-          onContextMenu={handleContextMenu}
         >
           {word.isEdit ? <div>[...]</div> : <div>{word.text}</div>}
         </div>

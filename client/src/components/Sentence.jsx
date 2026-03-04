@@ -15,9 +15,7 @@ const Sentence = forwardRef(
       currentWordId,
       selectedWordIds = new Set(),
       onWordClick,
-      onWordContextMenu,
       onDeleteSentence,
-      onRestoreSentence,
       onSentencePlay,
       searchResultsSet = new Set(),
       currentSearchWordId = null,
@@ -87,9 +85,6 @@ const Sentence = forwardRef(
                   isSearchMatch={isSearchMatch}
                   isCurrentSearchMatch={isCurrentSearchMatch}
                   onClick={() => onWordClick(word)}
-                  onContextMenu={(e) =>
-                    onWordContextMenu(e, word, sentence.start_at)
-                  }
                   ref={(el) => (wordRefs.current[word.start_at] = el)}
                 />
               );

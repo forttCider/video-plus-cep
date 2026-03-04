@@ -25,7 +25,6 @@ export default function WaveformPanel({
   const isInternalSeekRef = useRef(false)
   const lastRegionUpdateRef = useRef(0)
   const rafRef = useRef(null)
-  const lastScrollTimeRef = useRef(0)
   const [isReady, setIsReady] = useState(false)
   const [isRegionsLoading, setIsRegionsLoading] = useState(false)
   const [duration, setDuration] = useState(0)
@@ -361,11 +360,11 @@ export default function WaveformPanel({
         behavior: 'auto'
       })
     } else {
-      // 🔥 재생 중: 오른쪽 90%에 도달하면 페이지 넘기기
+      // 🔥 재생 중: 커서가 보이는 영역 밖이면 스크롤
+      const leftEdge = scrollLeft
       const rightEdge = scrollLeft + clientWidth * 0.9
-      
-      if (cursorPos >= rightEdge) {
-        // 다음 페이지로 - 커서가 왼쪽 10%에서 시작
+      if (cursorPos < leftEdge || cursorPos >= rightEdge) {
+        // 커서를 왼쪽 10% 위치에 놓기
         const scrollPos = cursorPos - clientWidth * 0.1
         wrapper.scrollTo({
           left: Math.max(0, scrollPos),
@@ -381,7 +380,7 @@ export default function WaveformPanel({
     if (currentTime <= 0) return
 
     const progress = Math.min(currentTime / duration, 1)
-    
+
     if (isPlaying) {
       // 재생 중에도 seekTo 호출 (커서 이동)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)

@@ -29,7 +29,6 @@ import {
   isPlaying,
   backupSequence,
   getBackupList,
-  openBackupSequence,
   restoreFromBackup,
   saveWordsData,
   loadWordsData,
@@ -39,18 +38,14 @@ import {
 import useAudioUpload from "../hooks/useAudioUpload"
 import initWords from "../js/initWords"
 import Sentence from "./Sentence"
-import ContextMenu from "./ContextMenu"
 import WaveformPanel from "./WaveformPanel"
 import {
-  getTimelinePosition,
   getTimelinePositionTick,
   buildTimelineIndex,
   findCurrentWordFromIndex,
   getOriginalTimeFromTimeline,
   getTimelineTimeFromOriginal,
 } from "../js/calculateTimeOffset"
-import { deleteWordFromTimeline } from "../js/deleteWord"
-import { restoreWordFromTimeline } from "../js/restoreWord"
 import {
   batchDeleteWords,
   applyDeleteResult,
@@ -78,7 +73,6 @@ export default function App() {
   const [currentWordId, setCurrentWordId] = useState(null)
   const [searchResultsSet, setSearchResultsSet] = useState(new Set())
   const [currentSearchWordId, setCurrentSearchWordId] = useState(null)
-  const [contextMenu, setContextMenu] = useState(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [batchProgress, setBatchProgress] = useState(null)
   const [showHistory, setShowHistory] = useState(false)
@@ -88,7 +82,6 @@ export default function App() {
   const [focusedWord, setFocusedWord] = useState(null)
   const [audioPath, setAudioPath] = useState(null) // 파형 표시용 오디오 경로
   const [showProcessingModal, setShowProcessingModal] = useState(false)
-  const [isLoadingResult, setIsLoadingResult] = useState(false) // 결과 로딩 중
   const [currentTime, setCurrentTime] = useState(0) // 현재 재생 위치 (초)
   const [isPlayingState, setIsPlayingState] = useState(false) // 재생 상태
   const wordRefs = useRef({})
@@ -435,84 +428,6 @@ export default function App() {
     containerRef.current?.focus()
   }
 
-  const handleWordContextMenu = (e, word, sentenceStartAt) => {
-    e.preventDefault()
-    setContextMenu({
-      position: { x: e.clientX, y: e.clientY },
-      word,
-      sentenceStartAt,
-    })
-  }
-  const handleCloseContextMenu = () => setContextMenu(null)
-
-  const handleDeleteWord = async () => {
-    if (isProcessing || !contextMenu) return
-    setIsProcessing(true)
-    try {
-      const result = await deleteWordFromTimeline(contextMenu.word, sentences)
-      if (!result.success) {
-        alert("삭제 실패: " + (result.error || "알 수 없는 오류"))
-        return
-      }
-      setSentences((prev) => {
-        const updated = prev.map((s) =>
-          s.start_at !== contextMenu.sentenceStartAt
-            ? s
-            : {
-                ...s,
-                words: s.words.map((w) =>
-                  w.start_at !== contextMenu.word.start_at
-                    ? w
-                    : { ...w, isDeleted: true },
-                ),
-              },
-        )
-        sentencesRef.current = updated
-        return updated
-      })
-    } catch (error) {
-      alert("삭제 실패: " + error.message)
-    } finally {
-      setIsProcessing(false)
-    }
-    setContextMenu(null)
-  }
-
-  const handleRestoreWord = async () => {
-    if (isProcessing || !contextMenu) return
-    setIsProcessing(true)
-    try {
-      const result = await restoreWordFromTimeline(contextMenu.word, sentences)
-      if (!result.success) {
-        alert("복원 실패: " + (result.error || "알 수 없는 오류"))
-        return
-      }
-      setSentences((prev) => {
-        const updated = prev.map((s) =>
-          s.start_at !== contextMenu.sentenceStartAt
-            ? s
-            : {
-                ...s,
-                words: s.words.map((w) =>
-                  w.start_at !== contextMenu.word.start_at
-                    ? w
-                    : { ...w, isDeleted: false },
-                ),
-              },
-        )
-        sentencesRef.current = updated
-        return updated
-      })
-    } catch (error) {
-      alert("복원 실패: " + error.message)
-    } finally {
-      setIsProcessing(false)
-    }
-    setContextMenu(null)
-  }
-
-  const handleMark = () => setContextMenu(null)
-
   const handleApplySelected = async () => {
     if (isProcessing || selectedWordIds.size === 0) {
       setStatus("선택된 단어가 없습니다")
@@ -535,9 +450,6 @@ export default function App() {
         total: selectedWordIds.size,
         label: "일괄 적용",
       })
-      // 디버그: 선택된 단어들의 tick 확인
-      sentencesRef.current.forEach((s) => {})
-
       const filterFn = (word) => {
         const wordId = word.id || word.start_at
         return (
@@ -546,15 +458,22 @@ export default function App() {
           word.end_at_tick !== undefined
         )
       }
-      const { deletedWordIds: actuallyDeleted, success } =
-        await batchDeleteWords(
-          filterFn,
-          sentencesRef.current,
-          (current, total) =>
-            setBatchProgress({ current, total, label: "일괄 적용" }),
-        )
+      const {
+        deletedWordIds: actuallyDeleted,
+        wordGaps,
+        success,
+      } = await batchDeleteWords(
+        filterFn,
+        sentencesRef.current,
+        (current, total) =>
+          setBatchProgress({ current, total, label: "일괄 적용" }),
+      )
       if (success && actuallyDeleted.size > 0) {
-        const updated = applyDeleteResult(sentencesRef.current, actuallyDeleted)
+        const updated = applyDeleteResult(
+          sentencesRef.current,
+          actuallyDeleted,
+          wordGaps,
+        )
         sentencesRef.current = updated
         setSentences(updated)
         setSelectedWordIds(new Set())
@@ -598,8 +517,6 @@ export default function App() {
     )
   }
 
-  const handleRestoreSentence = () =>
-    setStatus("복원은 백업 히스토리에서 해주세요")
   const handleOpenHistory = async () => {
     const result = await getBackupList()
     if (result?.success) {
@@ -617,6 +534,7 @@ export default function App() {
     const result = await restoreFromBackup(backupId)
     if (result?.success) {
       setShowHistory(false)
+      await setAllTracksLocked(true)
       setStatus(`복원 완료: ${result.restoredName}`)
       loadSequenceInfo()
       const wordsResult = await loadWordsData(backupId)
@@ -699,38 +617,6 @@ export default function App() {
     })
   }
 
-  const handleDeleteSilence_UNUSED = async () => {
-    if (isProcessing) return
-    setIsProcessing(true)
-    setStatus("시퀀스 백업 중...")
-    try {
-      const backupResult = await backupSequence(formatBackupName())
-      if (backupResult?.success)
-        await saveWordsData(backupResult.backupId, sentencesRef.current)
-      setStatus("무음 삭제 중...")
-      setBatchProgress({ current: 0, total: 0, label: "무음 삭제" })
-      const filterFn = (word) =>
-        !word.isDeleted && word.edit_points?.type === "silence"
-      const { deletedWordIds, success } = await batchDeleteWords(
-        filterFn,
-        sentencesRef.current,
-        (current, total) =>
-          setBatchProgress({ current, total, label: "무음 삭제" }),
-      )
-      if (success && deletedWordIds.size > 0) {
-        const updated = applyDeleteResult(sentencesRef.current, deletedWordIds)
-        sentencesRef.current = updated
-        setSentences(updated)
-        setStatus(`무음 삭제 완료: ${deletedWordIds.size}개`)
-      } else setStatus("삭제할 무음이 없습니다")
-    } catch (error) {
-      setStatus("무음 삭제 실패: " + error.message)
-    } finally {
-      setIsProcessing(false)
-      setBatchProgress(null)
-    }
-  }
-
   const handleSelectFiller = () => {
     if (fillerWordIds.size === 0) {
       setStatus("선택할 간투사가 없습니다")
@@ -748,41 +634,6 @@ export default function App() {
       }
       return next
     })
-  }
-
-  const handleDeleteFiller_UNUSED = async () => {
-    if (isProcessing) return
-    setIsProcessing(true)
-    setStatus("시퀀스 백업 중...")
-    try {
-      const backupResult = await backupSequence(formatBackupName())
-      if (backupResult?.success)
-        await saveWordsData(backupResult.backupId, sentencesRef.current)
-      setStatus("간투사 삭제 중...")
-      setBatchProgress({ current: 0, total: 0, label: "간투사 삭제" })
-      const filterFn = (word) =>
-        !word.isDeleted &&
-        FILLER_TYPES.includes(word.edit_points?.type) &&
-        word.start_at_tick !== undefined &&
-        word.end_at_tick !== undefined
-      const { deletedWordIds, success } = await batchDeleteWords(
-        filterFn,
-        sentencesRef.current,
-        (current, total) =>
-          setBatchProgress({ current, total, label: "간투사 삭제" }),
-      )
-      if (success && deletedWordIds.size > 0) {
-        const updated = applyDeleteResult(sentencesRef.current, deletedWordIds)
-        sentencesRef.current = updated
-        setSentences(updated)
-        setStatus(`간투사 삭제 완료: ${deletedWordIds.size}개`)
-      } else setStatus("삭제할 간투사가 없습니다")
-    } catch (error) {
-      setStatus("간투사 삭제 실패: " + error.message)
-    } finally {
-      setIsProcessing(false)
-      setBatchProgress(null)
-    }
   }
 
   const handleTranscribeFinish = async (taskId) => {
@@ -862,7 +713,7 @@ export default function App() {
       })
       setStatus("타임라인 정보 처리 중...")
       const gapSentences = await initWords(newSentences)
-      const lockResult = await setAllTracksLocked(true)
+      await setAllTracksLocked(true)
       setSentences(gapSentences)
       setStatus(`받아쓰기 완료: ${gapSentences.length}개 문장`)
     } catch (e) {
@@ -917,7 +768,7 @@ export default function App() {
 
   // 개발용: taskId로 바로 결과 가져오기
   // useEffect(() => {
-  //   const testTaskId = "174ab96b-650b-4f1c-9c4c-247fd132ae82"
+  //   const testTaskId = "a485a9b6-efb5-4f57-8b82-c1fceaf4cf38"
   //   if (testTaskId && isConnected && sentences.length === 0) {
   //     handleTranscribeFinish(testTaskId)
   //   }
@@ -1141,7 +992,7 @@ export default function App() {
       {/* 문장 목록 */}
       <Card className="flex-1 overflow-hidden">
         <CardContent className="p-3 overflow-y-auto h-full">
-          {isUpload || isLoadingResult ? (
+          {isUpload ? (
             <div className="text-muted-foreground text-center py-8">
               <div className="animate-pulse">
                 <p className="text-base">받아쓰는 중...</p>
@@ -1158,9 +1009,7 @@ export default function App() {
                 currentWordId={currentWordId}
                 selectedWordIds={selectedWordIds}
                 onWordClick={handleWordClick}
-                onWordContextMenu={handleWordContextMenu}
                 onDeleteSentence={handleDeleteSentence}
-                onRestoreSentence={handleRestoreSentence}
                 onSentencePlay={(sIdx, wIdx) =>
                   setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
                 }
@@ -1176,17 +1025,6 @@ export default function App() {
           )}
         </CardContent>
       </Card>
-
-      {contextMenu && (
-        <ContextMenu
-          position={contextMenu.position}
-          word={contextMenu.word}
-          onDelete={handleDeleteWord}
-          onRestore={handleRestoreWord}
-          onClose={handleCloseContextMenu}
-          onMark={handleMark}
-        />
-      )}
 
       {/* 백업 히스토리 */}
       <Dialog open={showHistory} onOpenChange={setShowHistory}>
