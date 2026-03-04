@@ -83,15 +83,26 @@ export default function App() {
   const [showProcessingModal, setShowProcessingModal] = useState(false)
   const [currentTime, setCurrentTime] = useState(0) // 현재 재생 위치 (초)
   const [isPlayingState, setIsPlayingState] = useState(false) // 재생 상태
+  const [currentWordSentenceIdx, setCurrentWordSentenceIdx] = useState(null)
   const wordRefs = useRef({})
   const sentencesRef = useRef(sentences)
   const timelineIndexRef = useRef(null)
   const containerRef = useRef(null)
+  const currentTimeRef = useRef(0)
+  const currentWordIdRef = useRef(null)
+  const isPlayingStateRef = useRef(false)
+  const wordSentenceIdxRef = useRef(new Map())
 
   useEffect(() => {
     sentencesRef.current = sentences
     if (sentences.length > 0) {
       timelineIndexRef.current = buildTimelineIndex(sentences)
+      // wordSentenceIdx Map 갱신
+      const map = new Map()
+      sentences.forEach((s, sIdx) => {
+        s.words?.forEach((w) => map.set(w.start_at, sIdx))
+      })
+      wordSentenceIdxRef.current = map
       setTimeout(() => containerRef.current?.focus(), 100)
     }
   }, [sentences])
@@ -108,20 +119,31 @@ export default function App() {
       try {
         const playingResult = await isPlaying()
         const nowPlaying = playingResult?.isPlaying || false
-        setIsPlayingState(nowPlaying)
+        if (nowPlaying !== isPlayingStateRef.current) {
+          isPlayingStateRef.current = nowPlaying
+          setIsPlayingState(nowPlaying)
+        }
         if (!nowPlaying) {
           // 재생 멈춤 - currentWordId는 유지 (노란색 배경 유지)
           return
         }
         const result = await getPlayerPosition()
         if (result?.success) {
-          setCurrentTime(result.seconds)
+          if (result.seconds !== currentTimeRef.current) {
+            currentTimeRef.current = result.seconds
+            setCurrentTime(result.seconds)
+          }
           if (timelineIndexRef.current) {
             const found = findCurrentWordFromIndex(
               timelineIndexRef.current,
               result.seconds,
             )
-            if (found?.word) setCurrentWordId(found.word.start_at)
+            if (found?.word && found.word.start_at !== currentWordIdRef.current) {
+              currentWordIdRef.current = found.word.start_at
+              setCurrentWordId(found.word.start_at)
+              const sIdx = wordSentenceIdxRef.current.get(found.word.start_at) ?? null
+              setCurrentWordSentenceIdx(sIdx)
+            }
           }
         }
       } catch (e) {}
@@ -989,6 +1011,7 @@ export default function App() {
                 sentenceIdx={sentenceIdx}
                 focusedWord={focusedWord}
                 currentWordId={currentWordId}
+                currentWordSentenceIdx={currentWordSentenceIdx}
                 selectedWordIds={selectedWordIds}
                 onWordClick={handleWordClick}
                 onDeleteSentence={handleDeleteSentence}

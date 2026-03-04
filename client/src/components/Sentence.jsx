@@ -13,6 +13,7 @@ const Sentence = forwardRef(
       sentenceIdx,
       focusedWord,
       currentWordId,
+      currentWordSentenceIdx,
       selectedWordIds = new Set(),
       onWordClick,
       onDeleteSentence,
@@ -107,13 +108,9 @@ export default React.memo(Sentence, (prevProps, nextProps) => {
   if (prevHasFocus && prevProps.focusedWord?.wordIdx !== nextProps.focusedWord?.wordIdx)
     return false;
 
-  // currentWordId가 이 문장의 단어에 해당하는지 확인
-  const prevHasCurrentWord = prevProps.sentence.words.some(
-    (w) => w.start_at === prevProps.currentWordId
-  );
-  const nextHasCurrentWord = nextProps.sentence.words.some(
-    (w) => w.start_at === nextProps.currentWordId
-  );
+  // currentWordId가 이 문장의 단어에 해당하는지 확인 (O(1) 비교)
+  const prevHasCurrentWord = prevProps.sentenceIdx === prevProps.currentWordSentenceIdx;
+  const nextHasCurrentWord = nextProps.sentenceIdx === nextProps.currentWordSentenceIdx;
   if (prevHasCurrentWord !== nextHasCurrentWord) return false;
   if (prevHasCurrentWord && prevProps.currentWordId !== nextProps.currentWordId)
     return false;

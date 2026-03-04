@@ -59,9 +59,11 @@ export default function WaveformPanel({
     return words
   }, [sentences])
 
-  // 🔥 현재 단어만 빠르게 찾기 위한 인덱스
+  // 🔥 현재 단어만 빠르게 찾기 위한 인덱스 (Map으로 O(1) 조회)
   const wordTimeIndex = useMemo(() => {
-    return allWords.map(w => ({ id: w.id, start: w.startSec, end: w.endSec }))
+    const map = new Map()
+    allWords.forEach(w => map.set(String(w.id), { start: w.startSec, end: w.endSec }))
+    return map
   }, [allWords])
 
   // 🔥 각 단어의 드래그 경계 계산 (이전 단어 끝 ~ 다음 단어 시작)
@@ -238,7 +240,7 @@ export default function WaveformPanel({
     if (!activeRegionsRef.current.size) return
 
     activeRegionsRef.current.forEach((region, id) => {
-      const word = wordTimeIndex.find(w => String(w.id) === id)
+      const word = wordTimeIndex.get(id)
       if (!word) return
 
       const isCurrent = time >= word.start && time < word.end
