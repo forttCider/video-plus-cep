@@ -5,6 +5,10 @@
 const TICKS_PER_SECOND = 254016000000;
 const TICKS_PER_SECOND_BIGINT = 254016000000n;
 
+// ========== 삭제 구간 캐시 (매 렌더링마다 재계산 방지) ==========
+let deletedIntervalsCache = null;
+let deletedIntervalsCacheKey = null;
+
 // ========== 성능 최적화: 프리컴퓨팅 + 이진 탐색 ==========
 
 /**
@@ -12,7 +16,9 @@ const TICKS_PER_SECOND_BIGINT = 254016000000n;
  */
 export function buildTimelineIndex(sentences) {
   if (!sentences || sentences.length === 0) {
-    return { entries: [] };
+    deletedIntervalsCache = null;
+    deletedIntervalsCacheKey = null;
+    return { entries: [], deletedIntervals: [] };
   }
 
   const words = sentences.flatMap((item) => item.words);
@@ -31,11 +37,30 @@ export function buildTimelineIndex(sentences) {
 
   // 오프셋 프리컴퓨팅 (BigInt로 정밀도 유지) + 삭제되지 않은 단어만 수집
   const entries = [];
+  const deletedIntervals = []; // 🔥 삭제 구간도 저장
   let accumulatedOffsetTick = 0n;
 
   for (const word of sortedWords) {
     if (word.isDeleted) {
-      const durationTick = BigInt(word.end_at_tick || 0) - BigInt(word.start_at_tick || 0);
+      const startTick = BigInt(word.start_at_tick || 0);
+      const endTick = BigInt(word.end_at_tick || 0);
+      const gapTick = BigInt(word.gapAfterTick || 0);
+      const durationTick = endTick - startTick + gapTick;
+
+      // 삭제 구간 저장 (연속 구간 병합 — gap 포함)
+      const lastInterval = deletedIntervals[deletedIntervals.length - 1];
+      if (lastInterval && lastInterval.endTick >= startTick) {
+        // 이전 구간과 연속 → 확장
+        lastInterval.endTick = endTick + gapTick;
+        lastInterval.durationTick = lastInterval.endTick - lastInterval.startTick;
+      } else {
+        deletedIntervals.push({
+          startTick,
+          endTick: endTick + gapTick,
+          durationTick,
+        });
+      }
+
       accumulatedOffsetTick += durationTick;
       continue;
     }
@@ -52,7 +77,11 @@ export function buildTimelineIndex(sentences) {
     });
   }
 
-  return { entries };
+  // 캐시 업데이트
+  deletedIntervalsCache = deletedIntervals;
+  deletedIntervalsCacheKey = sentences.length;
+
+  return { entries, deletedIntervals };
 }
 
 /**
@@ -89,9 +118,6 @@ export function getTimelinePosition(targetWord, sentences) {
   let accumulatedOffset = 0;
 
   const words = sentences.flatMap((item) => item.words);
-  
-  // 삭제된 단어 확인 (디버그)
-  const deletedWords = words.filter((w) => w.isDeleted);
 
   // 시간순 정렬 (start_at_sec 기준)
   const sortedWords = [...words].sort((a, b) => {
@@ -116,7 +142,9 @@ export function getTimelinePosition(targetWord, sentences) {
     }
 
     if (word.isDeleted) {
-      accumulatedOffset += word.end_at_sec - word.start_at_sec;
+      const wordDuration = word.end_at_sec - word.start_at_sec;
+      const gapSec = Number(BigInt(word.gapAfterTick || 0)) / TICKS_PER_SECOND;
+      accumulatedOffset += wordDuration + gapSec;
     }
   }
 
@@ -130,12 +158,6 @@ export function getTimelinePositionTick(targetWord, sentences) {
   let accumulatedOffsetTick = 0n;
 
   const words = sentences.flatMap((item) => item.words);
-  
-  // 디버그: 삭제된 단어 목록
-  const deletedWords = words.filter(w => w.isDeleted);
-  deletedWords.forEach((w, i) => {
-    const dur = BigInt(w.end_at_tick || 0) - BigInt(w.start_at_tick || 0);
-  });
 
   // 시간순 정렬 (start_at_tick 기준)
   const sortedWords = [...words].sort((a, b) => {
@@ -159,10 +181,77 @@ export function getTimelinePositionTick(targetWord, sentences) {
     }
 
     if (word.isDeleted && word.start_at_tick && word.end_at_tick) {
+      const gapTick = BigInt(word.gapAfterTick || 0);
       accumulatedOffsetTick +=
-        BigInt(word.end_at_tick) - BigInt(word.start_at_tick);
+        BigInt(word.end_at_tick) - BigInt(word.start_at_tick) + gapTick;
     }
   }
 
   return { startTick: BigInt(targetWord.start_at_tick || 0) };
+}
+
+/**
+ * 🔥 타임라인 시간 → 원본 오디오 시간 변환 (waveform 동기화용)
+ * 캐시된 deletedIntervals 사용으로 O(n) 최적화
+ * @param {number} timelineSec - Premiere 타임라인 시간 (초)
+ * @returns {number} - 원본 오디오 시간 (초)
+ */
+export function getOriginalTimeFromTimeline(timelineSec) {
+  if (!deletedIntervalsCache || deletedIntervalsCache.length === 0) {
+    return timelineSec;
+  }
+
+  // 🔥 tick 기반 계산 (BigInt 정밀도)
+  const timelineTick = BigInt(Math.floor(timelineSec * TICKS_PER_SECOND));
+  let totalDeletedTick = 0n;
+
+  for (const interval of deletedIntervalsCache) {
+    // 타임라인 tick + 지금까지 삭제된 tick = 원본 tick 추정
+    const estimatedOriginalTick = timelineTick + totalDeletedTick;
+
+    // 이 삭제 구간보다 앞에 있으면 중단
+    if (estimatedOriginalTick < interval.startTick) {
+      break;
+    }
+
+    // 이 삭제 구간을 지났으면 duration 누적
+    totalDeletedTick += interval.durationTick;
+  }
+
+  // tick → 초 변환
+  return Number(timelineTick + totalDeletedTick) / TICKS_PER_SECOND;
+}
+
+/**
+ * 🔥 원본 오디오 시간 → 타임라인 시간 변환 (waveform 클릭 → Premiere 이동용)
+ * @param {number} originalSec - 원본 오디오 시간 (초)
+ * @returns {number} - Premiere 타임라인 시간 (초)
+ */
+export function getTimelineTimeFromOriginal(originalSec) {
+  if (!deletedIntervalsCache || deletedIntervalsCache.length === 0) {
+    return originalSec;
+  }
+
+  // 🔥 tick 기반 계산 (BigInt 정밀도)
+  const originalTick = BigInt(Math.floor(originalSec * TICKS_PER_SECOND));
+  let totalDeletedTick = 0n;
+  
+  for (const interval of deletedIntervalsCache) {
+    // 원본 tick이 이 삭제 구간보다 앞에 있으면 중단
+    if (originalTick < interval.startTick) {
+      break;
+    }
+    
+    // 원본 tick이 삭제 구간 안에 있으면, 구간 시작까지만 계산
+    if (originalTick < interval.endTick) {
+      break;
+    }
+    
+    // 이 삭제 구간을 완전히 지났으면 duration 누적
+    totalDeletedTick += interval.durationTick;
+  }
+
+  // tick → 초 변환
+  const resultTick = originalTick - totalDeletedTick;
+  return Number(resultTick) / TICKS_PER_SECOND;
 }

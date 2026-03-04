@@ -35,7 +35,7 @@
         </Lifecycle>
         <UI>
           <Type>Panel</Type>
-          <Menu>videoPlusCEP</Menu>
+          <Menu>videoPlus</Menu>
           <Geometry>
             <Size>
               <Height>600</Height>

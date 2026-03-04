@@ -39,45 +39,40 @@ function isOverlapping(word, allWords) {
 }
 
 /**
- * 연속된 단어들을 그룹으로 묶기
- * - 삭제 안 된 단어들 중에서 선택된 단어가 인덱스상 연속이면 그룹
- * - 중간에 선택 안 된 (삭제 안 된) 단어가 있으면 그룹 분리
+ * 인접 기반 그룹핑: 선택된 단어 사이에 비삭제/비선택 단어가 없으면 같은 그룹
+ * @param {Array} selectedWords - 선택된 단어 (시간순 정렬됨)
+ * @param {Array} allWords - 전체 단어 목록
  */
 function groupConsecutiveWords(selectedWords, allWords) {
   if (selectedWords.length === 0) return []
 
-  // 선택된 단어 ID Set
   const selectedIds = new Set(selectedWords.map((w) => w.id || w.start_at))
-
-  // 모든 단어 시간순 정렬 (삭제된 것 포함)
-  const sortedAll = [...allWords].sort((a, b) => {
-    const aStart = a.start_at || 0
-    const bStart = b.start_at || 0
-    return aStart - bStart
-  })
+  const sortedAll = [...allWords].sort((a, b) => a.start_at - b.start_at)
+  const sortedSelected = [...selectedWords].sort(
+    (a, b) => a.start_at - b.start_at,
+  )
 
   const groups = []
-  let currentGroup = []
+  let currentGroup = [sortedSelected[0]]
 
-  for (const word of sortedAll) {
-    const wordId = word.id || word.start_at
-    const isSelected = selectedIds.has(wordId)
+  for (let i = 1; i < sortedSelected.length; i++) {
+    const prev = sortedSelected[i - 1]
+    const curr = sortedSelected[i]
 
-    if (isSelected && !word.isDeleted) {
-      // 선택된 + 삭제 안 된 단어면 현재 그룹에 추가
-      currentGroup.push(word)
-    } else if (word.isDeleted) {
-      // 이미 삭제된 단어가 있으면 그룹 끊기
-      if (currentGroup.length > 0) {
-        groups.push(currentGroup)
-        currentGroup = []
-      }
+    // prev와 curr 사이에 비삭제/비선택 단어가 있는지 확인
+    const hasActiveWordBetween = sortedAll.some((w) => {
+      const wId = w.id || w.start_at
+      if (selectedIds.has(wId)) return false
+      if (w.isDeleted) return false
+      // prev.end_at ~ curr.start_at 사이에 있는 단어
+      return w.start_at >= prev.end_at && w.end_at <= curr.start_at
+    })
+
+    if (hasActiveWordBetween) {
+      groups.push(currentGroup)
+      currentGroup = [curr]
     } else {
-      // 선택 안 된 (삭제 안 된) 단어가 있으면 그룹 끊기
-      if (currentGroup.length > 0) {
-        groups.push(currentGroup)
-        currentGroup = []
-      }
+      currentGroup.push(curr)
     }
   }
 
@@ -86,6 +81,34 @@ function groupConsecutiveWords(selectedWords, allWords) {
   }
 
   return groups
+}
+
+/**
+ * 그룹 내 각 단어의 gapAfterTick 계산
+ * (다음 단어 start_at_tick - 현재 단어 end_at_tick)
+ * @param {Array<Array>} groups - 그룹 배열
+ * @returns {Map<any, BigInt>} wordId → gapAfterTick
+ */
+function calculateGroupGaps(groups) {
+  const wordGaps = new Map()
+
+  for (const group of groups) {
+    for (let i = 0; i < group.length; i++) {
+      const word = group[i]
+      const wordId = word.id || word.start_at
+
+      if (i < group.length - 1) {
+        const nextWord = group[i + 1]
+        const gap =
+          BigInt(nextWord.start_at_tick || 0) - BigInt(word.end_at_tick || 0)
+        wordGaps.set(wordId, gap > 0n ? gap : 0n)
+      } else {
+        wordGaps.set(wordId, 0n)
+      }
+    }
+  }
+
+  return wordGaps
 }
 
 /**
@@ -119,13 +142,15 @@ export async function batchDeleteWords(filterFn, sentences, onProgress) {
     return { deletedWordIds: new Set(), success: true }
   }
 
-  allWords.forEach((w, i) => {})
-
   // 2. 시간순 정렬 (앞에서부터)
   const sortedWords = [...allWords].sort((a, b) => a.start_at - b.start_at)
 
-  // 3. 연속된 단어들을 그룹으로 묶기 (전체 단어 목록 기준으로 연속 판단)
-  const groups = groupConsecutiveWords(sortedWords, allWordsFlat)
+  // 3. 인접 기반으로 연속된 단어들을 그룹으로 묶기
+  const allWordsFromSentences = sentences.flatMap((s) => s.words)
+  const groups = groupConsecutiveWords(sortedWords, allWordsFromSentences)
+
+  // 3-1. 그룹 내 gap 계산
+  const wordGaps = calculateGroupGaps(groups)
 
   // 4. 그룹을 역순으로 (뒤에서부터 삭제해야 앞 위치 안 바뀜)
   const reversedGroups = [...groups].reverse()
@@ -166,46 +191,16 @@ export async function batchDeleteWords(filterFn, sentences, onProgress) {
         timelineEndTick.toString(),
       )
 
-      // 실제 삭제된 범위 로깅
-      if (result?.razorStart && result?.razorEnd) {
-        const requestedDuration = groupDuration
-        const actualDuration = BigInt(result.actualDuration || 0)
-        const diff = requestedDuration - actualDuration
-      }
-
       if (result?.success) {
         deletedWords.push(...group)
 
-        // 로컬 복사본 업데이트 - 그룹 전체 duration을 첫 단어에 반영
+        // 로컬 복사본 업데이트
         const groupIds = new Set(group.map((w) => w.id || w.start_at))
-        const firstWordId = group[0].id || group[0].start_at
-        const lastWord = group[group.length - 1]
-
         currentSentences = currentSentences.map((s) => ({
           ...s,
-          words: s.words.map((w) => {
-            const wordId = w.id || w.start_at
-            if (!groupIds.has(wordId)) return w
-
-            // 첫 단어: end를 그룹 마지막까지 확장 (gap 포함)
-            if (wordId === firstWordId) {
-              return {
-                ...w,
-                isDeleted: true,
-                end_at_tick: lastWord.end_at_tick,
-                end_at: lastWord.end_at,
-                end_at_sec: lastWord.end_at_sec, // sec도 수정
-              }
-            }
-            // 나머지 단어: duration 0으로 설정 (offset 중복 계산 방지)
-            return {
-              ...w,
-              isDeleted: true,
-              start_at_tick: w.end_at_tick,
-              start_at: w.end_at,
-              start_at_sec: w.end_at_sec, // sec도 수정
-            }
-          }),
+          words: s.words.map((w) =>
+            groupIds.has(w.id || w.start_at) ? { ...w, isDeleted: true } : w
+          ),
         }))
       }
 
@@ -222,19 +217,29 @@ export async function batchDeleteWords(filterFn, sentences, onProgress) {
 
   return {
     deletedWordIds: new Set(deletedWords.map((w) => w.id || w.start_at)),
-    updatedSentences: currentSentences, // gap 포함된 duration 정보가 반영된 sentences
+    wordGaps,
     success: true,
   }
 }
 
 /**
  * 삭제 결과를 sentences 상태에 적용
+ * @param {Array} sentences
+ * @param {Set} deletedWordIds
+ * @param {Map|null} wordGaps - wordId → gapAfterTick (BigInt)
  */
-export function applyDeleteResult(sentences, deletedWordIds) {
+export function applyDeleteResult(sentences, deletedWordIds, wordGaps = null) {
   return sentences.map((s) => {
-    const updatedWords = s.words.map((w) =>
-      deletedWordIds.has(w.id || w.start_at) ? { ...w, isDeleted: true } : w,
-    )
+    const updatedWords = s.words.map((w) => {
+      const wordId = w.id || w.start_at
+      if (!deletedWordIds.has(wordId)) return w
+
+      const updates = { ...w, isDeleted: true }
+      if (wordGaps && wordGaps.has(wordId)) {
+        updates.gapAfterTick = wordGaps.get(wordId)
+      }
+      return updates
+    })
     const allDeleted = updatedWords.every((w) => w.isDeleted)
     return {
       ...s,

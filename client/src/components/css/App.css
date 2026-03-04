@@ -150,6 +150,7 @@ html, body {
   border-radius: 4px;
   padding: 15px;
   overflow-y: auto;
+  min-height: 0; /* flex 자식 스크롤 필수 */
 }
 
 .placeholder {
@@ -216,9 +217,9 @@ html, body {
 /* 플로팅 버튼 */
 .floating-btn {
   position: fixed;
-  bottom: 20px;
+  bottom: 130px; /* 100px 파형 패널 + 30px 여백 */
   right: 20px;
-  z-index: 100;
+  z-index: 200;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -371,4 +372,14 @@ html, body {
   font-size: 13px;
   color: #aaa;
   text-align: center;
+}
+
+/* 무음/간투사 버튼 활성화 상태 */
+.btn-filter-active {
+  border: 1px solid #f97316 !important;
+  color: #f97316 !important;
+}
+
+.btn-filter-active svg {
+  color: #f97316 !important;
 }

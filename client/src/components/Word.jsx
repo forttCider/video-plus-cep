@@ -1,10 +1,11 @@
-import React, { forwardRef } from "react";
+import React, { forwardRef } from "react"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "./ui/tooltip";
-import "./css/Word.css";
+  TooltipProvider,
+} from "./ui/tooltip"
+import "./css/Word.css"
 
 const Word = React.memo(
   forwardRef(
@@ -17,15 +18,9 @@ const Word = React.memo(
         isSearchMatch,
         isCurrentSearchMatch,
         onClick,
-        onContextMenu,
       },
-      ref
+      ref,
     ) => {
-      const handleContextMenu = (e) => {
-        e.preventDefault();
-        onContextMenu(e);
-      };
-
       const classNames = [
         "word",
         "word-normal",
@@ -38,32 +33,32 @@ const Word = React.memo(
         isCurrentSearchMatch ? "word-search-current" : "",
       ]
         .filter(Boolean)
-        .join(" ");
+        .join(" ")
 
-      const reason = word.edit_points?.reason;
+      const reason = word.edit_points?.reason
 
-      const wordElement = (
-        <div
-          ref={ref}
-          className={classNames}
-          onClick={onClick}
-          onContextMenu={handleContextMenu}
-        >
+      const wordContent = (
+        <div ref={ref} className={classNames} onClick={onClick}>
           {word.isEdit ? <div>[...]</div> : <div>{word.text}</div>}
         </div>
-      );
+      )
 
+      // reason이 있으면 tooltip으로 감싸기
       if (reason) {
         return (
-          <Tooltip>
-            <TooltipTrigger asChild>{wordElement}</TooltipTrigger>
-            <TooltipContent>{reason}</TooltipContent>
-          </Tooltip>
-        );
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>{wordContent}</TooltipTrigger>
+              <TooltipContent>
+                <p>{reason}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )
       }
 
-      return wordElement;
-    }
+      return wordContent
+    },
   ),
   (prevProps, nextProps) => {
     return (
@@ -75,8 +70,8 @@ const Word = React.memo(
       prevProps.word.isDeleted === nextProps.word.isDeleted &&
       prevProps.word.isEdit === nextProps.word.isEdit &&
       prevProps.word.text === nextProps.word.text
-    );
-  }
-);
+    )
+  },
+)
 
-export default Word;
+export default Word

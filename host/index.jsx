@@ -27,17 +27,26 @@ function setAllTracksLocked(lock) {
         // lock을 정수로 변환 (PPro API는 1/0 사용)
         var lockValue = lock ? 1 : 0;
         
+        var startTime = new Date().getTime();
+        
         // 비디오 트랙 잠금
         for (var i = 0; i < seq.videoTracks.numTracks; i++) {
+            var trackStart = new Date().getTime();
             seq.videoTracks[i].setLocked(lockValue);
+            $.writeln("[트랙잠금] 비디오 " + i + ": " + (new Date().getTime() - trackStart) + "ms");
         }
         
         // 오디오 트랙 잠금
         for (var j = 0; j < seq.audioTracks.numTracks; j++) {
+            var trackStart2 = new Date().getTime();
             seq.audioTracks[j].setLocked(lockValue);
+            $.writeln("[트랙잠금] 오디오 " + j + ": " + (new Date().getTime() - trackStart2) + "ms");
         }
         
-        return '{"success":true,"locked":' + lock + ',"videoTracks":' + seq.videoTracks.numTracks + ',"audioTracks":' + seq.audioTracks.numTracks + '}';
+        var totalTime = new Date().getTime() - startTime;
+        $.writeln("[트랙잠금] 전체: " + totalTime + "ms");
+        
+        return '{"success":true,"locked":' + lock + ',"videoTracks":' + seq.videoTracks.numTracks + ',"audioTracks":' + seq.audioTracks.numTracks + ',"totalMs":' + totalTime + '}';
     } catch (e) {
         return '{"success":false,"error":"' + e.toString() + '"}';
     }
@@ -287,7 +296,7 @@ function ticksToSeconds(ticks) {
 }
 
 function secondsToTicks(seconds) {
-    return Math.round(seconds * 254016000000);
+    return Math.floor(seconds * 254016000000);
 }
 
 function ticksToTimecode(ticks) {
