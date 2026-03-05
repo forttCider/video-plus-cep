@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react"
+import React, { useState, useEffect, useRef, useCallback } from "react"
 import {
   Mic,
   VolumeX,
@@ -6,6 +6,9 @@ import {
   Scissors,
   History,
   FolderOpen,
+  X,
+  RefreshCw,
+  ClipboardCopy,
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Badge } from "./ui/badge"
@@ -21,6 +24,9 @@ import {
 import {
   testConnection,
   getActiveSequenceInfo,
+  onSequenceOpened,
+  onSequenceClosed,
+  registerSequenceChangeEvent,
   setPlayerPosition,
   setPlayerPositionByTicks,
   getPlayerPosition,
@@ -33,6 +39,7 @@ import {
   loadWordsData,
   registerKeyEvents,
   setAllTracksLocked,
+  getExtensionVersion,
 } from "../js/cep-bridge"
 import useAudioUpload from "../hooks/useAudioUpload"
 import initWords from "../js/initWords"
@@ -84,6 +91,9 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0) // 현재 재생 위치 (초)
   const [isPlayingState, setIsPlayingState] = useState(false) // 재생 상태
   const [currentWordSentenceIdx, setCurrentWordSentenceIdx] = useState(null)
+  const [logs, setLogs] = useState([])
+  const logPanelRef = useRef(null)
+  const batchAbortRef = useRef(null)
   const wordRefs = useRef({})
   const sentencesRef = useRef(sentences)
   const timelineIndexRef = useRef(null)
@@ -92,6 +102,29 @@ export default function App() {
   const currentWordIdRef = useRef(null)
   const isPlayingStateRef = useRef(false)
   const wordSentenceIdxRef = useRef(new Map())
+
+  const addLog = useCallback((level, message) => {
+    setLogs(prev => [...prev, { level, message, time: new Date() }])
+    setTimeout(() => {
+      logPanelRef.current?.scrollTo({ top: logPanelRef.current.scrollHeight })
+    }, 50)
+  }, [])
+
+  const clearLogs = useCallback(() => setLogs([]), [])
+  const copyLogs = useCallback(() => {
+    const text = logs.map(l =>
+      `[${l.time.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}] ${l.message}`
+    ).join("\n")
+    const textarea = document.createElement("textarea")
+    textarea.value = text
+    textarea.style.position = "fixed"
+    textarea.style.opacity = "0"
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand("copy")
+    document.body.removeChild(textarea)
+    addLog("info", "로그가 클립보드에 복사되었습니다")
+  }, [logs, addLog])
 
   useEffect(() => {
     sentencesRef.current = sentences
@@ -480,17 +513,19 @@ export default function App() {
           word.end_at_tick !== undefined
         )
       }
+      batchAbortRef.current = new AbortController()
       const {
         deletedWordIds: actuallyDeleted,
         wordGaps,
-        success,
       } = await batchDeleteWords(
         filterFn,
         sentencesRef.current,
         (current, total) =>
           setBatchProgress({ current, total, label: "일괄 적용" }),
+        addLog,
+        batchAbortRef.current.signal,
       )
-      if (success && actuallyDeleted.size > 0) {
+      if (actuallyDeleted.size > 0) {
         const updated = applyDeleteResult(
           sentencesRef.current,
           actuallyDeleted,
@@ -499,7 +534,10 @@ export default function App() {
         sentencesRef.current = updated
         setSentences(updated)
         setSelectedWordIds(new Set())
-        setStatus(`일괄 적용 완료: ${actuallyDeleted.size}개 단어`)
+        const aborted = batchAbortRef.current?.signal?.aborted
+        setStatus(aborted
+          ? `중단됨: ${actuallyDeleted.size}개 삭제 완료`
+          : `일괄 적용 완료: ${actuallyDeleted.size}개 단어`)
       } else setStatus("적용할 단어가 없습니다")
     } catch (error) {
       setStatus("일괄 적용 실패: " + error.message)
@@ -777,6 +815,7 @@ export default function App() {
       sentencesRef.current = []
       timelineIndexRef.current = null
     },
+    addLog,
   })
 
   // audioPath 동기화 (null도 처리)
@@ -786,6 +825,18 @@ export default function App() {
 
   useEffect(() => {
     checkConnection()
+    const removeOpened = onSequenceOpened((name) => {
+      setSequenceInfo({ name })
+      setStatus("연결됨")
+    })
+    const removeClosed = onSequenceClosed(() => {
+      setSequenceInfo(null)
+      setStatus("시퀀스를 열어주세요")
+    })
+    return () => {
+      removeOpened()
+      removeClosed()
+    }
   }, [])
 
   // 개발용: taskId로 바로 결과 가져오기
@@ -802,8 +853,8 @@ export default function App() {
       const result = await testConnection()
       if (result === "ExtendScript OK") {
         setIsConnected(true)
-        setStatus("연결됨")
         registerKeyEvents()
+        registerSequenceChangeEvent()
         loadSequenceInfo()
       } else setError("연결 실패: " + result)
     } catch (e) {
@@ -811,16 +862,27 @@ export default function App() {
     }
   }
 
+  const [isRefreshing, setIsRefreshing] = useState(true)
+
   const loadSequenceInfo = async () => {
+    setIsRefreshing(true)
     try {
-      const info = await getActiveSequenceInfo()
+      const [info] = await Promise.all([
+        getActiveSequenceInfo(),
+        new Promise((r) => setTimeout(r, 500)),
+      ])
       if (info?.name) {
         setSequenceInfo(info)
-        setStatus("시퀀스: " + info.name)
-      } else if (info?.error) setStatus(info.error)
-      else setStatus("시퀀스를 열어주세요")
+        setStatus("연결됨")
+      } else {
+        setSequenceInfo(null)
+        setStatus("시퀀스를 열어주세요")
+      }
     } catch (e) {
-      setStatus("시퀀스 정보 조회 실패")
+      setSequenceInfo(null)
+      setStatus("시퀀스를 열어주세요")
+    } finally {
+      setIsRefreshing(false)
     }
   }
 
@@ -864,22 +926,42 @@ export default function App() {
           </Button>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={isConnected ? "default" : "secondary"}>
-            {isConnected ? "연결됨" : "연결 중..."}
+          <Badge className="bg-white text-[#2a2a2a] border-0">
+            v{getExtensionVersion()}
           </Badge>
-          {sequenceInfo && (
-            <Badge variant="secondary" className="gap-1">
+          <Badge
+            variant={sequenceInfo ? "default" : isRefreshing ? "secondary" : "destructive"}
+            className="gap-1"
+          >
+            {isRefreshing ? (
+              <RefreshCw className="h-3 w-3 animate-spin" />
+            ) : (
               <FolderOpen className="h-3 w-3" />
-              {sequenceInfo.name}
-            </Badge>
-          )}
+            )}
+            {isRefreshing
+              ? "확인 중..."
+              : sequenceInfo
+                ? `연결됨 · ${sequenceInfo.name}`
+                : "시퀀스 연결 안됨"}
+          </Badge>
         </div>
       </div>
 
       {/* 상태 바 */}
       <Card className="mb-3">
-        <CardContent className="py-2 px-3 text-sm text-muted-foreground">
-          {status}
+        <CardContent className="py-2 px-3 text-sm text-muted-foreground flex items-center justify-between">
+          <span>{status}</span>
+          {status === "시퀀스를 열어주세요" && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-2"
+              onClick={loadSequenceInfo}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+              새로고침
+            </Button>
+          )}
         </CardContent>
       </Card>
 
@@ -932,6 +1014,37 @@ export default function App() {
               }
             />
           </CardContent>
+        </Card>
+      )}
+
+      {/* 로그 패널 */}
+      {logs.length > 0 && (
+        <Card className="mb-3 flex-shrink-0">
+          <div className="flex items-center justify-between px-3 py-1.5 border-b border-border">
+            <span className="text-xs text-muted-foreground font-mono">로그 ({logs.length})</span>
+            <div className="flex gap-1">
+              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={copyLogs} title="로그 복사">
+                <ClipboardCopy className="h-3 w-3" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={clearLogs} title="로그 삭제">
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          </div>
+          <div ref={logPanelRef} className="h-[100px] overflow-y-auto p-2 font-mono text-[11px]">
+            {logs.map((log, i) => (
+              <div key={i} className={`leading-relaxed break-all ${
+                log.level === "error" ? "text-red-400" :
+                log.level === "warn" ? "text-yellow-400" :
+                "text-green-400"
+              }`}>
+                <span className="text-muted-foreground mr-1.5">
+                  {log.time.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                </span>
+                {log.message}
+              </div>
+            ))}
+          </div>
         </Card>
       )}
 
@@ -1138,6 +1251,21 @@ export default function App() {
                       : 0
                   }
                 />
+                <div className="flex justify-center mt-4">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      if (batchAbortRef.current) {
+                        batchAbortRef.current.abort()
+                        addLog("warn", "사용자가 작업을 중단했습니다")
+                      }
+                    }}
+                  >
+                    <X className="h-3 w-3 mr-1" />
+                    중단
+                  </Button>
+                </div>
               </div>
             )}
           </div>

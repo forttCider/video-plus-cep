@@ -109,6 +109,39 @@ export async function evalJSON(script) {
 }
 
 /**
+ * 시퀀스 열림 이벤트 리스너
+ * @param {Function} callback - 시퀀스 열림 시 호출 (시퀀스 이름 전달)
+ * @returns {Function} 리스너 해제 함수
+ */
+export function onSequenceOpened(callback) {
+  const cs = getCSInterface()
+  const eventType = "com.cidermics.videoplus.sequenceOpened"
+  const handler = (e) => callback(e.data)
+  cs.addEventListener(eventType, handler)
+  return () => cs.removeEventListener(eventType, handler)
+}
+
+/**
+ * 시퀀스 닫힘 이벤트 리스너
+ * @param {Function} callback - 시퀀스 닫힘 시 호출
+ * @returns {Function} 리스너 해제 함수
+ */
+export function onSequenceClosed(callback) {
+  const cs = getCSInterface()
+  const eventType = "com.cidermics.videoplus.sequenceClosed"
+  const handler = () => callback()
+  cs.addEventListener(eventType, handler)
+  return () => cs.removeEventListener(eventType, handler)
+}
+
+/**
+ * ExtendScript에서 시퀀스 변경 이벤트 등록
+ */
+export async function registerSequenceChangeEvent() {
+  return evalJSON("registerSequenceChangeEvent()")
+}
+
+/**
  * 시퀀스 정보 가져오기
  */
 export async function getActiveSequenceInfo() {
@@ -124,13 +157,32 @@ export async function testConnection() {
 }
 
 /**
+ * manifest.xml 확장 버전 가져오기
+ */
+export function getExtensionVersion() {
+  try {
+    const fs = require("fs")
+    const path = require("path")
+    const cs = getCSInterface()
+    const extPath = cs.getSystemPath(SystemPath.EXTENSION)
+    const manifestPath = path.join(extPath, "CSXS", "manifest.xml")
+    const xml = fs.readFileSync(manifestPath, "utf8")
+    const match = xml.match(/ExtensionBundleVersion="([^"]+)"/)
+    if (match) return match[1]
+  } catch (e) {}
+  return "unknown"
+}
+
+/**
  * PluginData 폴더 경로 가져오기
  */
 export function getPluginDataPath() {
-  const cs = getCSInterface()
-  const userDataPath = cs.getSystemPath(SystemPath.USER_DATA)
-  const pluginPath = `${userDataPath}/videoPlus`
-  return pluginPath
+  const os = require("os")
+  const path = require("path")
+  // os.tmpdir()는 Windows에서 8.3 단축 경로(CIDERM~1)를 반환할 수 있어
+  // ExtendScript exportAsMediaDirect가 인식 못함 → 홈 디렉토리 사용
+  const result = path.join(os.homedir(), ".videoPlus")
+  return result
 }
 
 /**
@@ -148,11 +200,11 @@ function ensureDir(dirPath) {
  * @returns {Promise<{success: boolean, outputPath?: string, error?: string}>}
  */
 export async function renderAudio() {
-  // PluginData 폴더에 저장
-  const pluginDataPath = getPluginDataPath()
-  ensureDir(pluginDataPath)
-  const outputPath = `${pluginDataPath}/videoplus_audio.wav`
-  return evalJSON(`renderAudio("${outputPath}")`)
+  // ExtendScript에서 Folder.temp를 사용해 직접 경로 결정 (Windows 8.3 경로 문제 회피)
+  console.log("[renderAudio] ExtendScript auto path mode")
+  const result = evalJSON(`renderAudio("auto")`)
+  console.log("[renderAudio] ExtendScript result:", JSON.stringify(result))
+  return result
 }
 
 /**
@@ -233,19 +285,17 @@ export async function renderAudioAndRead() {
   // 2. 파일을 ArrayBuffer로 읽기
   const arrayBuffer = await readFileAsArrayBuffer(result.outputPath)
 
-  // 3. waveAudio.wav로 복사 (파형용 - 삭제 안 함)
-  const pluginDataPath = getPluginDataPath()
-  const waveAudioPath = `${pluginDataPath}/waveAudio.wav`
-  try {
-    await copyFile(result.outputPath, waveAudioPath)
-  } catch (e) {
-    // 복사 실패해도 계속 진행
+  // 원본 경로를 파형용으로 그대로 사용
+  return { arrayBuffer, audioPath: result.outputPath }
+}
+
+/**
+ * 렌더링된 오디오 파일 정리 (받아쓰기 완료 후 호출)
+ */
+export function cleanupAudioFile(audioPath) {
+  if (audioPath) {
+    deleteFile(audioPath).catch(() => {})
   }
-
-  // 4. 원본 파일 삭제
-  await deleteFile(result.outputPath)
-
-  return { arrayBuffer, audioPath: waveAudioPath, waveAudioPath }
 }
 
 /**

@@ -2,5 +2,10 @@ node_modules/
 client/node_modules/
 client/dist/
 .DS_Store
-
+cert.p12
+_build/
 .history/
+
+build-zxp.js
+install-mac.sh
+install-windows.bat

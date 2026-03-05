@@ -15,6 +15,29 @@ function testConnection() {
     return "ExtendScript OK";
 }
 
+function registerSequenceChangeEvent() {
+    try {
+        app.bind("onActiveSequenceChanged", function() {
+            var xLib = new ExternalObject("lib:PlugPlugExternalObject");
+            if (xLib) {
+                var seq = app.project.activeSequence;
+                var event = new CSXSEvent();
+                if (seq) {
+                    event.type = "com.cidermics.videoplus.sequenceOpened";
+                    event.data = seq.name;
+                } else {
+                    event.type = "com.cidermics.videoplus.sequenceClosed";
+                    event.data = "";
+                }
+                event.dispatch();
+            }
+        });
+        return '{"success":true}';
+    } catch (e) {
+        return '{"success":false,"error":"' + e.toString() + '"}';
+    }
+}
+
 /**
  * 모든 트랙 잠금/해제
  * @param {boolean} lock - true면 잠금, false면 해제
@@ -1778,14 +1801,58 @@ function restoreWordByTimecode(sourceInTC, sourceOutTC, durationTC, timelinePosi
 }
 
 function findAudioPreset() {
-    var versions = ["2025", "2024", "2023", "2022"];
-    var presetFiles = ["3F3F3F3F_57415645/Waveform Audio 48kHz 16-bit.epr", "3F3F3F3F_57415645/Waveform Audio 44.1kHz 16-bit.epr"];
+    var versions = ["2026", "2025", "2024", "2023", "2022"];
+    var presetFiles = [
+        "3F3F3F3F_57415645/Waveform Audio 48kHz 16-bit.epr",
+        "3F3F3F3F_57415645/Waveform Audio 44.1kHz 16-bit.epr"
+    ];
+    var isMac = ($.os.indexOf("Mac") !== -1);
+
+    // 1순위: 플러그인 내장 프리셋
+    var bundledPreset = new File($.fileName).parent.parent.fsName.replace(/\\/g, "/") + "/presets/wav_48khz_16bit.epr";
+    $.writeln("[findAudioPreset] bundled: " + bundledPreset);
+    var bundledFile = new File(bundledPreset);
+    if (bundledFile.exists) return bundledPreset;
+
+    // 2순위: Premiere Pro 설치 폴더
     for (var v = 0; v < versions.length; v++) {
-        var basePath = "/Applications/Adobe Media Encoder " + versions[v] + "/Adobe Media Encoder " + versions[v] + ".app/Contents/MediaIO/systempresets";
+        var pproBase;
+        if (isMac) {
+            pproBase = "/Applications/Adobe Premiere Pro " + versions[v] +
+                "/Adobe Premiere Pro " + versions[v] +
+                ".app/Contents/MediaIO/systempresets";
+        } else {
+            pproBase = "C:/Program Files/Adobe/Adobe Premiere Pro " +
+                versions[v] + "/MediaIO/systempresets";
+        }
         for (var p = 0; p < presetFiles.length; p++) {
-            var presetPath = basePath + "/" + presetFiles[p];
-            var presetFile = new File(presetPath);
-            if (presetFile.exists) return presetPath;
+            var pproPath = pproBase + "/" + presetFiles[p];
+            var pproFile = new File(pproPath);
+            if (pproFile.exists) {
+                $.writeln("[findAudioPreset] found in PPro: " + pproPath);
+                return pproPath;
+            }
+        }
+    }
+
+    // 3순위: Media Encoder 설치 폴더
+    for (var v2 = 0; v2 < versions.length; v2++) {
+        var ameBase;
+        if (isMac) {
+            ameBase = "/Applications/Adobe Media Encoder " + versions[v2] +
+                "/Adobe Media Encoder " + versions[v2] +
+                ".app/Contents/MediaIO/systempresets";
+        } else {
+            ameBase = "C:/Program Files/Adobe/Adobe Media Encoder " +
+                versions[v2] + "/MediaIO/systempresets";
+        }
+        for (var p2 = 0; p2 < presetFiles.length; p2++) {
+            var amePath = ameBase + "/" + presetFiles[p2];
+            var ameFile = new File(amePath);
+            if (ameFile.exists) {
+                $.writeln("[findAudioPreset] found in AME: " + amePath);
+                return amePath;
+            }
         }
     }
     return null;
@@ -1793,9 +1860,25 @@ function findAudioPreset() {
 
 function renderAudio(outputPath) {
     try {
+        $.writeln("[renderAudio] outputPath(param): " + outputPath);
+        $.writeln("[renderAudio] OS: " + $.os);
+
+        // outputPath가 전달되지 않으면 ExtendScript에서 직접 경로 생성
+        if (!outputPath || outputPath === "auto") {
+            // Folder("~")는 8.3 단축 경로 없이 전체 홈 경로 반환
+            var homeFolder = new Folder("~");
+            var vpFolder = new Folder(homeFolder.fsName + "/.videoPlus");
+            if (!vpFolder.exists) vpFolder.create();
+            outputPath = vpFolder.fsName.replace(/\\/g, "/") + "/videoplus_audio.wav";
+            $.writeln("[renderAudio] home fsName: " + homeFolder.fsName);
+            $.writeln("[renderAudio] auto outputPath: " + outputPath);
+        }
+
         if (!app || !app.project) return '{"success":false,"error":"프로젝트가 없습니다"}';
         var seq = app.project.activeSequence;
         if (!seq) return '{"success":false,"error":"시퀀스를 열어주세요"}';
+
+        $.writeln("[renderAudio] sequence: " + seq.name);
 
         var originalVideoMutes = [];
         var originalAudioMutes = [];
@@ -1812,21 +1895,47 @@ function renderAudio(outputPath) {
             aTrack.setMute(j !== 0 ? 1 : 0);
         }
 
+        // 출력 디렉토리 확인/생성
+        var outputFile = new File(outputPath);
+        var outputDir = outputFile.parent;
+        $.writeln("[renderAudio] outputDir: " + outputDir.fsName + " exists: " + outputDir.exists);
+        if (!outputDir.exists) {
+            var created = outputDir.create();
+            $.writeln("[renderAudio] dir created: " + created);
+        }
+
         var presetPath = findAudioPreset();
+        $.writeln("[renderAudio] presetPath: " + presetPath);
         if (!presetPath) {
             restoreTracks(seq, originalVideoMutes, originalAudioMutes);
-            return '{"success":false,"error":"오디오 프리셋을 찾을 수 없습니다"}';
+            var osName = ($.os.indexOf("Mac") !== -1) ? "Mac" : "Windows";
+            return '{"success":false,"error":"오디오 프리셋을 찾을 수 없습니다 (OS: ' + osName + '). Adobe Media Encoder가 설치되어 있는지 확인해주세요."}';
         }
 
-        var success = seq.exportAsMediaDirect(outputPath, presetPath, 0);
+        // 프리셋 파일 존재 확인
+        var presetFile = new File(presetPath);
+        $.writeln("[renderAudio] preset exists: " + presetFile.exists);
+
+        // exportAsMediaDirect는 OS 네이티브 경로(fsName) 사용
+        var nativeOutputPath = outputFile.fsName;
+        var nativePresetPath = presetFile.fsName;
+        $.writeln("[renderAudio] exportAsMediaDirect 호출...");
+        $.writeln("[renderAudio]   nativeOutputPath: " + nativeOutputPath);
+        $.writeln("[renderAudio]   nativePresetPath: " + nativePresetPath);
+        var success = seq.exportAsMediaDirect(nativeOutputPath, nativePresetPath, 0);
+        $.writeln("[renderAudio] export result: " + success);
         restoreTracks(seq, originalVideoMutes, originalAudioMutes);
 
-        if (success) {
+        var fileExists = outputFile.exists;
+        $.writeln("[renderAudio] file exists: " + fileExists);
+
+        if (success && fileExists) {
             return '{"success":true,"outputPath":"' + outputPath.replace(/\\/g, "\\\\") + '"}';
         } else {
-            return '{"success":false,"error":"렌더링 실패"}';
+            return '{"success":false,"error":"렌더링 실패 - exportResult: ' + success + ', fileExists: ' + fileExists + ', nativeOutput: ' + nativeOutputPath.replace(/\\/g, "\\\\") + ', nativePreset: ' + nativePresetPath.replace(/\\/g, "\\\\") + '"}';
         }
     } catch (e) {
+        $.writeln("[renderAudio] ERROR: " + e.toString());
         return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
     }
 }

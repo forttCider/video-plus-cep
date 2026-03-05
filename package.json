@@ -1,9 +1,10 @@
 {
   "name": "videoplus-cep",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "videoPlus - Premiere Pro CEP Extension (음성 받아쓰기 + 자막 편집 + 무음/간투사 일괄 제거)",
   "scripts": {
     "build": "cd client && npm run build",
+    "build:zxp": "cd client && npm run build && cd .. && node scripts/build-zxp.js",
     "dev": "cd client && npm run dev",
     "install:client": "cd client && npm install",
     "link": "node scripts/link.js",

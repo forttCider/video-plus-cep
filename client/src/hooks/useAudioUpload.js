@@ -4,13 +4,13 @@
  */
 import { useEffect, useState, useRef } from "react"
 import { flushSync } from "react-dom"
-import { renderAudioAndRead } from "../js/cep-bridge"
+import { renderAudioAndRead, cleanupAudioFile } from "../js/cep-bridge"
 
 const API_URL =
   process.env.REACT_APP_VIDEO_API_URL || "https://vapi.cidermics.com"
 const CHUNK_SIZE = 64 * 1024 * 1024 // 64MB
 
-export default function useAudioUpload({ onFinish, onClose, onStart }) {
+export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
   const [isUpload, setIsUpload] = useState(false)
   const [isCanceled, setIsCanceled] = useState(false)
   const [isError, setIsError] = useState(false)
@@ -55,6 +55,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart }) {
 
     // 🔥 onStart 콜백 호출 (sentences 초기화 등)
     onStart && onStart()
+    addLog && addLog("info", "오디오 렌더링 시작...")
 
     try {
       // 오디오 렌더링 + ArrayBuffer 읽기
@@ -75,6 +76,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart }) {
       await publishQueue(arrayBuffer)
     } catch (error) {
       console.error("[useAudioUpload] 렌더링 오류:", error)
+      addLog && addLog("error", "오디오 렌더링 실패: " + error.message)
       isErrorRef.current = true
       setIsError(true)
       setIsUpload(false)
@@ -86,6 +88,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart }) {
 
   // 업로드 큐 등록
   const publishQueue = async (arrayBuffer) => {
+    addLog && addLog("info", "받아쓰기 요청 중...")
     try {
       const response = await fetch(`${API_URL}/transcribe/queue`, {
         method: "POST",
@@ -98,6 +101,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart }) {
 
       if (!response.ok) {
         const error = await response.json()
+        addLog && addLog("error", "서버 응답 오류: " + (error.detail || response.status))
         isErrorRef.current = true
         setIsError(true)
         setIsUpload(false)
@@ -120,6 +124,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart }) {
       startPolling(resData.task_id)
     } catch (error) {
       console.error("[useAudioUpload] 큐 등록 오류:", error)
+      addLog && addLog("error", "서버 연결 오류: " + error.message)
       isErrorRef.current = true
       setIsError(true)
       setIsUpload(false)
@@ -165,6 +170,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart }) {
 
       if (!response.ok) {
         const error = await response.json()
+        addLog && addLog("error", "업로드 실패: " + (error.detail || response.status))
         isErrorRef.current = true
         setIsError(true)
         setIsUpload(false)
@@ -181,6 +187,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart }) {
         return false
       }
       console.error("[useAudioUpload] 청크 업로드 오류:", error)
+      addLog && addLog("error", "업로드 오류: " + error.message)
       isErrorRef.current = true
       setIsError(true)
       setIsUpload(false)
@@ -219,12 +226,15 @@ export default function useAudioUpload({ onFinish, onClose, onStart }) {
       )
 
       if (data.status === "completed") {
+        addLog && addLog("info", "받아쓰기 완료")
         clearInterval(intervalRef.current)
         localStorage.removeItem("canceledTaskId")
         // 🔥 onFinish 완료까지 isUpload 유지 (빈 화면 방지)
         if (onFinish) {
           await onFinish(taskId)
         }
+        // 오디오 파일 정리
+        cleanupAudioFile(audioPath)
         setIsUpload(false)
         setUploadFile(null)
       }
@@ -257,6 +267,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart }) {
       setIsCanceled(true)
       setIsUpload(false)
       setUploadFile(null)
+      cleanupAudioFile(audioPath) // 오디오 파일 정리
       setAudioPath(null) // 🔥 파형 초기화
       clearInterval(intervalRef.current)
       currentTaskIdRef.current = null // 🔥 taskId 초기화

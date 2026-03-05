@@ -118,7 +118,7 @@ function calculateGroupGaps(groups) {
  * @param {Function} onProgress - 진행률 콜백 (current, total)
  * @returns {Promise<{deletedWordIds: Set, success: boolean}>}
  */
-export async function batchDeleteWords(filterFn, sentences, onProgress) {
+export async function batchDeleteWords(filterFn, sentences, onProgress, addLog, signal) {
   // 0. 전체 단어 목록 (겹침 체크용)
   const allWordsFlat = sentences.flatMap((s) =>
     s.words.map((w) => ({ ...w, sentenceStartAt: s.start_at })),
@@ -131,6 +131,7 @@ export async function batchDeleteWords(filterFn, sentences, onProgress) {
         if (!filterFn(w)) return false
         // 겹침 체크 - 겹치면 스킵
         if (isOverlapping(w, allWordsFlat)) {
+          addLog && addLog("warn", `⚠️ 스킵(겹침): "${w.text || ""}" (${w.start_at.toFixed(2)}s)`)
           return false
         }
         return true
@@ -166,6 +167,12 @@ export async function batchDeleteWords(filterFn, sentences, onProgress) {
   let processedCount = 0
 
   for (let i = 0; i < reversedGroups.length; i++) {
+    // 취소 시그널 확인
+    if (signal?.aborted) {
+      addLog && addLog("warn", `⚠️ 사용자 중단: ${deletedWords.length}개 삭제 완료`)
+      break
+    }
+
     const group = reversedGroups[i]
 
     // 그룹의 시작과 끝 (연속된 단어들의 전체 범위)
@@ -193,6 +200,9 @@ export async function batchDeleteWords(filterFn, sentences, onProgress) {
 
       if (result?.success) {
         deletedWords.push(...group)
+        for (const w of group) {
+          addLog && addLog("info", `✅ 삭제: "${w.text || ""}" (${w.start_at.toFixed(2)}s)`)
+        }
 
         // 로컬 복사본 업데이트
         const groupIds = new Set(group.map((w) => w.id || w.start_at))
@@ -202,6 +212,10 @@ export async function batchDeleteWords(filterFn, sentences, onProgress) {
             groupIds.has(w.id || w.start_at) ? { ...w, isDeleted: true } : w
           ),
         }))
+      } else {
+        for (const w of group) {
+          addLog && addLog("error", `❌ 실패: "${w.text || ""}" (${w.start_at.toFixed(2)}s) - ${result?.error || "클립 없음"}`)
+        }
       }
 
       processedCount += group.length
