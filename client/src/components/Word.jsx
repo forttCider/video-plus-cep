@@ -69,7 +69,8 @@ const Word = React.memo(
       prevProps.isCurrentSearchMatch === nextProps.isCurrentSearchMatch &&
       prevProps.word.isDeleted === nextProps.word.isDeleted &&
       prevProps.word.isEdit === nextProps.word.isEdit &&
-      prevProps.word.text === nextProps.word.text
+      prevProps.word.text === nextProps.word.text &&
+      prevProps.word.frameCount === nextProps.word.frameCount
     )
   },
 )

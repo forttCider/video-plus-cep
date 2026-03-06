@@ -11,6 +11,8 @@ import {
   ClipboardCopy,
 } from "lucide-react"
 import { Button } from "./ui/button"
+import { Input } from "./ui/input"
+import { Slider } from "./ui/slider"
 import { Badge } from "./ui/badge"
 import { Card, CardContent } from "./ui/card"
 import { Progress } from "./ui/progress"
@@ -43,7 +45,7 @@ import {
   getSequenceFramerate,
 } from "../js/cep-bridge"
 import useAudioUpload from "../hooks/useAudioUpload"
-import initWords, { secondsToTicksAligned } from "../js/initWords"
+import initWords, { TICKS_PER_SECOND, secondsToTicksAligned } from "../js/initWords"
 import Sentence from "./Sentence"
 import WaveformPanel from "./WaveformPanel"
 import {
@@ -88,6 +90,7 @@ export default function App() {
   const [restoreConfirm, setRestoreConfirm] = useState(null)
   const [focusedWord, setFocusedWord] = useState(null)
   const [audioPath, setAudioPath] = useState(null) // 파형 표시용 오디오 경로
+  const [silenceSeconds, setSilenceSeconds] = useState("1")
   const [showProcessingModal, setShowProcessingModal] = useState(false)
   const [currentTime, setCurrentTime] = useState(0) // 현재 재생 위치 (초)
   const [isPlayingState, setIsPlayingState] = useState(false) // 재생 상태
@@ -709,7 +712,8 @@ export default function App() {
     setStatus("받아쓰기 결과 가져오는 중...")
     // console.log(taskId)
     try {
-      const response = await fetch(`${API_URL}/transcribe/cut/${taskId}`)
+      const silenceMs = Math.round((parseFloat(silenceSeconds) || 1) * 1000)
+      const response = await fetch(`${API_URL}/transcribe/cut/${taskId}?silence_ms=${silenceMs}`)
       if (!response.ok) {
         setStatus("결과 가져오기 실패: " + response.status)
         return
@@ -728,6 +732,7 @@ export default function App() {
             parentId: sentenceId,
           }
           if (word.edit_points?.type === "silence") {
+            const fps = Number(TICKS_PER_SECOND) / Number(timebaseRef.current)
             const silenceWord = {
               duration: word.edit_points.duration_ms,
               edit_points: {
@@ -743,6 +748,7 @@ export default function App() {
               parentId: sentenceId,
               isEdit: true,
               silence_seconds: word.edit_points.silence_seconds,
+              frameCount: Math.round(word.edit_points.duration_ms / 1000 * fps),
               isDeleted: false,
               isHighlight: false,
             }
@@ -765,6 +771,7 @@ export default function App() {
                 parentId: sentenceId,
                 isEdit: true,
                 silence_seconds: editPoint.silence_seconds,
+                frameCount: Math.round(editPoint.duration_ms / 1000 * Number(TICKS_PER_SECOND) / Number(timebaseRef.current)),
                 isDeleted: false,
                 isHighlight: false,
               },
@@ -1061,7 +1068,30 @@ export default function App() {
       )}
 
       {/* 액션 버튼 */}
-      <div className="flex flex-wrap gap-2 mb-3">
+      <div className="flex flex-wrap gap-2 mb-3 items-center">
+        <div className="flex items-center gap-2 w-full mb-1">
+          <span className="text-xs text-muted-foreground whitespace-nowrap">최소 무음 길이</span>
+          <Slider
+            value={[isNaN(parseFloat(silenceSeconds)) ? 0 : parseFloat(silenceSeconds)]}
+            onValueChange={([v]) => setSilenceSeconds(String(v))}
+            min={0}
+            max={10}
+            step={0.05}
+            disabled={isUpload}
+            className="flex-1"
+          />
+          <Input
+            type="number"
+            step="0.05"
+            min="0"
+            max="10"
+            value={silenceSeconds}
+            onChange={(e) => setSilenceSeconds(e.target.value)}
+            disabled={isUpload}
+            className="w-[70px] h-7 text-xs text-center"
+          />
+          <span className="text-xs text-muted-foreground">seconds</span>
+        </div>
         <Button
           size="sm"
           disabled={!isConnected || isUpload}
