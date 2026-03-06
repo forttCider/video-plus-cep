@@ -322,6 +322,16 @@ function secondsToTicks(seconds) {
     return Math.floor(seconds * 254016000000);
 }
 
+function ticksToNativeTimecode(ticks) {
+    var seq = app.project.activeSequence;
+    if (!seq) return null;
+    app.enableQE();
+    var qeSeq = qe.project.getActiveSequence();
+    if (!qeSeq) return null;
+    seq.setPlayerPosition(ticks.toString());
+    return qeSeq.CTI.timecode;
+}
+
 function ticksToTimecode(ticks) {
     var seq = app.project.activeSequence;
     var fps = 30;
@@ -539,17 +549,22 @@ function deleteWordByTimelineTicks(timelineStartTicks, timelineEndTicks) {
         var qeSeq = qe.project.getActiveSequence();
         if (!qeSeq) return '{"success":false,"error":"QE 시퀀스 없음"}';
 
-        var startTC = ticksToTimecode(timelineStartTicks);
-        var endTC = ticksToTimecode(timelineEndTicks);
+        // CTI 위치 저장 (native timecode 변환 시 CTI가 이동하므로)
+        var savedPosition = seq.getPlayerPosition().ticks;
+
+        var startTC = ticksToNativeTimecode(timelineStartTicks);
+        var endTC = ticksToNativeTimecode(timelineEndTicks);
+
+        // CTI 복원
+        seq.setPlayerPosition(savedPosition);
 
         // 최적화: 해당 시간에 클립이 있는 트랙만 razor
         razorTracksAtTime(startTC, timelineStartTicks);
         razorTracksAtTime(endTC, timelineEndTicks);
 
-        var razorStartTicks = timecodeToTicks(startTC);
-        var razorEndTicks = timecodeToTicks(endTC);
-        var razorStart = parseFloat(razorStartTicks);
-        var razorEnd = parseFloat(razorEndTicks);
+        // 원본 tick 값 직접 사용 (timecode 왕복 변환 제거)
+        var razorStart = parseFloat(timelineStartTicks);
+        var razorEnd = parseFloat(timelineEndTicks);
 
         var actualLeftOutPoint = "";
         var actualRightInPoint = "";
@@ -613,11 +628,11 @@ function deleteWordByTimelineTicks(timelineStartTicks, timelineEndTicks) {
 
         // 삭제된 클립이 없으면 실패로 처리
         if (deletedCount === 0) {
-            return '{"success":false,"error":"삭제할 클립을 찾지 못함","deletedClips":0,"requestedStart":"' + timelineStartTicks + '","requestedEnd":"' + timelineEndTicks + '","razorStart":"' + razorStartTicks + '","razorEnd":"' + razorEndTicks + '"}';
+            return '{"success":false,"error":"삭제할 클립을 찾지 못함","deletedClips":0,"requestedStart":"' + timelineStartTicks + '","requestedEnd":"' + timelineEndTicks + '","razorStart":"' + timelineStartTicks + '","razorEnd":"' + timelineEndTicks + '"}';
         }
         // 실제 삭제된 tick 범위도 반환
-        var actualDuration = razorEndTicks - razorStartTicks;
-        return '{"success":true,"deletedClips":' + deletedCount + ',"actualLeftOutPoint":"' + actualLeftOutPoint + '","actualRightInPoint":"' + actualRightInPoint + '","razorStart":"' + razorStartTicks + '","razorEnd":"' + razorEndTicks + '","actualDuration":"' + actualDuration + '"}';
+        var actualDuration = parseFloat(timelineEndTicks) - parseFloat(timelineStartTicks);
+        return '{"success":true,"deletedClips":' + deletedCount + ',"actualLeftOutPoint":"' + actualLeftOutPoint + '","actualRightInPoint":"' + actualRightInPoint + '","razorStart":"' + timelineStartTicks + '","razorEnd":"' + timelineEndTicks + '","actualDuration":"' + actualDuration + '"}';
     } catch (e) {
         return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
     }

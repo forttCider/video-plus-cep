@@ -4,7 +4,7 @@
  */
 import { getVideoTrackItems, getSequenceFramerate } from "./cep-bridge";
 
-const TICKS_PER_SECOND = 254016000000n; // BigInt
+export const TICKS_PER_SECOND = 254016000000n; // BigInt
 
 /**
  * 밀리초 → 초
@@ -15,9 +15,10 @@ function getSecondTime(ms) {
 
 /**
  * 초 → ticks (BigInt) - 프레임 정렬됨
+ * @param {number} seconds
+ * @param {BigInt} ticksPerFrame - seq.timebase 값 (Premiere 네이티브)
  */
-function secondsToTicksAligned(seconds, fps) {
-  const ticksPerFrame = TICKS_PER_SECOND / BigInt(fps);
+export function secondsToTicksAligned(seconds, ticksPerFrame) {
   const rawTicks = BigInt(Math.round(seconds * Number(TICKS_PER_SECOND)));
   // 프레임 단위로 내림 (floor)
   const frames = rawTicks / ticksPerFrame;
@@ -37,7 +38,7 @@ export default async function initWords(sentences) {
       console.error("[initWords] 프레임레이트 오류:", framerateInfo.error);
       return sentences;
     }
-    const fps = Math.round(framerateInfo.frameRate || 30);
+    const ticksPerFrame = BigInt(framerateInfo.timebase || "8467200000");
     
     // 비디오 트랙 클립 정보 가져오기
     const trackInfo = await getVideoTrackItems();
@@ -97,8 +98,8 @@ export default async function initWords(sentences) {
         );
         
         // tick 값 계산 (프레임 정렬됨)
-        const startTick = secondsToTicksAligned(item.start_at / 1000, fps);
-        const endTick = secondsToTicksAligned(item.end_at / 1000, fps);
+        const startTick = secondsToTicksAligned(item.start_at / 1000, ticksPerFrame);
+        const endTick = secondsToTicksAligned(item.end_at / 1000, ticksPerFrame);
         
         if (containingClip) {
           // 일반 단어 - 하나의 클립에 포함

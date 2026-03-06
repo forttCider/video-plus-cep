@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="12.0" ExtensionBundleId="com.cidermics.videoplus" ExtensionBundleVersion="1.0.3" ExtensionBundleName="videoPlus">
+<ExtensionManifest Version="12.0" ExtensionBundleId="com.cidermics.videoplus" ExtensionBundleVersion="1.0.7" ExtensionBundleName="videoPlus">
 
   <ExtensionList>
-    <Extension Id="com.cidermics.videoplus.panel" Version="1.0.3" />
+    <Extension Id="com.cidermics.videoplus.panel" Version="1.0.7" />
   </ExtensionList>
 
   <ExecutionEnvironment>

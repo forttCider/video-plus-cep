@@ -40,9 +40,10 @@ import {
   registerKeyEvents,
   setAllTracksLocked,
   getExtensionVersion,
+  getSequenceFramerate,
 } from "../js/cep-bridge"
 import useAudioUpload from "../hooks/useAudioUpload"
-import initWords from "../js/initWords"
+import initWords, { secondsToTicksAligned } from "../js/initWords"
 import Sentence from "./Sentence"
 import WaveformPanel from "./WaveformPanel"
 import {
@@ -102,6 +103,7 @@ export default function App() {
   const currentWordIdRef = useRef(null)
   const isPlayingStateRef = useRef(false)
   const wordSentenceIdxRef = useRef(new Map())
+  const timebaseRef = useRef(8467200000n)
 
   const addLog = useCallback((level, message) => {
     setLogs(prev => [...prev, { level, message, time: new Date() }])
@@ -427,12 +429,9 @@ export default function App() {
               ...word,
               start_at: newStart,
               end_at: newEnd,
-              // tick 값도 업데이트 (밀리초 → tick 변환)
-              // TICKS_PER_SECOND = 254016000000
-              start_at_tick: BigInt(
-                Math.floor((newStart / 1000) * 254016000000),
-              ),
-              end_at_tick: BigInt(Math.floor((newEnd / 1000) * 254016000000)),
+              // tick 값도 업데이트 (프레임 정렬됨)
+              start_at_tick: secondsToTicksAligned(newStart / 1000, timebaseRef.current),
+              end_at_tick: secondsToTicksAligned(newEnd / 1000, timebaseRef.current),
             }
           }
           return word
@@ -454,10 +453,19 @@ export default function App() {
         timelineTime,
       )
       if (found?.word) {
-        setFocusedWord({
-          sentenceIdx: found.sentenceIdx,
-          wordIdx: found.wordIdx,
+        // sentenceIdx/wordIdx 찾기
+        let sIdx = -1, wIdx = -1
+        sentencesRef.current.forEach((s, si) => {
+          s.words?.forEach((w, wi) => {
+            if (w.start_at === found.word.start_at) {
+              sIdx = si
+              wIdx = wi
+            }
+          })
         })
+        if (sIdx >= 0) {
+          setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
+        }
         setCurrentWordId(found.word.start_at)
       }
     }
@@ -772,6 +780,10 @@ export default function App() {
         }
       })
       setStatus("타임라인 정보 처리 중...")
+      const framerateInfo = await getSequenceFramerate()
+      if (framerateInfo.timebase) {
+        timebaseRef.current = BigInt(framerateInfo.timebase)
+      }
       const gapSentences = await initWords(newSentences)
       await setAllTracksLocked(true)
       setSentences(gapSentences)
@@ -1220,7 +1232,7 @@ export default function App() {
       {/* 작업 중 안내 모달 */}
       <Dialog open={showProcessingModal}>
         <DialogContent
-          className="max-w-sm"
+          className="max-w-sm [&>button]:hidden"
           onPointerDownOutside={(e) => e.preventDefault()}
         >
           <DialogHeader>
