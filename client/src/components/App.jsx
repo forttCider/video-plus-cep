@@ -9,6 +9,7 @@ import {
   X,
   RefreshCw,
   ClipboardCopy,
+  Subtitles,
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
@@ -43,6 +44,7 @@ import {
   setAllTracksLocked,
   getExtensionVersion,
   getSequenceFramerate,
+  exportCaptionsAsSRT,
 } from "../js/cep-bridge"
 import useAudioUpload from "../hooks/useAudioUpload"
 import initWords, {
@@ -593,6 +595,26 @@ export default function App() {
     }
   }
 
+  const handleExportCaptions = async () => {
+    if (sentences.length === 0) {
+      setStatus("내보낼 자막이 없습니다")
+      return
+    }
+    try {
+      setStatus("자막 SRT 생성 중...")
+      const result = await exportCaptionsAsSRT(sentencesRef.current)
+      if (result?.success) {
+        setStatus(
+          `자막 내보내기 완료: 화자 ${result.speakers}명, ${result.files}개 파일`,
+        )
+      } else {
+        setStatus("자막 내보내기 실패: " + (result?.error || "알 수 없는 오류"))
+      }
+    } catch (e) {
+      setStatus("자막 내보내기 오류: " + e.message)
+    }
+  }
+
   const handleDeleteSentence = (sentence) => {
     const selectableWords = sentence.words.filter(
       (w) =>
@@ -743,7 +765,7 @@ export default function App() {
   const handleTranscribeFinish = async (taskId) => {
     if (!taskId) return
     setStatus("받아쓰기 결과 가져오는 중...")
-    // console.log(taskId)
+    console.log(taskId)
     try {
       const response = await fetch(
         `${API_URL}/transcribe/cut/${taskId}?silence_ms=500`,
@@ -898,12 +920,12 @@ export default function App() {
   }, [])
 
   // 개발용: taskId로 바로 결과 가져오기
-  // useEffect(() => {
-  //   const testTaskId = "799ae2af-1d7e-4d16-9aff-ec5f3309dc5a"
-  //   if (testTaskId && isConnected && sentences.length === 0) {
-  //     handleTranscribeFinish(testTaskId)
-  //   }
-  // }, [isConnected])
+  useEffect(() => {
+    const testTaskId = "fc6e3bd3-4741-4876-b46b-d85451c5a5b3"
+    if (testTaskId && isConnected && sentences.length === 0) {
+      handleTranscribeFinish(testTaskId)
+    }
+  }, [isConnected])
 
   const checkConnection = async () => {
     try {
@@ -1424,6 +1446,17 @@ export default function App() {
           <Scissors className="h-4 w-4 mr-2" />
           시퀀스에 적용{" "}
           {selectedWordIds.size > 0 && `(${selectedWordIds.size})`}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={
+            sentences.length === 0 || !isConnected || isUpload || isProcessing
+          }
+          onClick={handleExportCaptions}
+        >
+          <Subtitles className="h-4 w-4 mr-2" />
+          자막 내보내기
         </Button>
       </div>
 

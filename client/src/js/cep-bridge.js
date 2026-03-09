@@ -728,3 +728,46 @@ export async function isPlaying() {
 export async function setAllTracksLocked(lock) {
   return evalJSON(`setAllTracksLocked(${lock})`)
 }
+
+/**
+ * 자막 SRT 생성 + Premiere 임포트
+ * sentences에서 필요한 데이터만 추출하여 경량화 후 전달
+ */
+export async function exportCaptionsAsSRT(sentences) {
+  // 삭제된 단어의 누적 오프셋 계산 (타임라인 시간 보정)
+  const allWords = sentences
+    .flatMap((s) => s.words || [])
+    .sort((a, b) => (a.start_at || 0) - (b.start_at || 0))
+
+  const TICKS_PER_SECOND = 254016000000
+  const offsetMap = new Map()
+  let accOffset = 0
+  for (const w of allWords) {
+    if (w.isDeleted) {
+      const duration = (w.end_at || 0) - (w.start_at || 0)
+      const gapMs = Number(BigInt(w.gapAfterTick || 0)) / TICKS_PER_SECOND * 1000
+      accOffset += duration + gapMs
+    } else {
+      offsetMap.set(w.start_at, accOffset)
+    }
+  }
+
+  // 경량화: 필요한 필드만 추출 + 타임라인 보정 적용
+  const lightData = sentences
+    .filter((s) => !s.isDeleted)
+    .map((s) => ({
+      spk: s.spk || 0,
+      words: (s.words || [])
+        .filter((w) => !w.isDeleted && !w.isEdit && w.text)
+        .map((w) => {
+          const off = offsetMap.get(w.start_at) || 0
+          return { t: w.text, s: w.start_at - off, e: w.end_at - off }
+        }),
+    }))
+    .filter((s) => s.words.length > 0)
+
+  const data = JSON.stringify(lightData)
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+  return evalJSON(`exportCaptionsAsSRT('${data}')`)
+}

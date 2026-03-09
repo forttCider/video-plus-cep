@@ -2786,3 +2786,143 @@ function insertAdjustmentLayers(filePath) {
         return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
     }
 }
+
+/**
+ * ms → SRT 시간 형식 "HH:MM:SS,mmm"
+ */
+function msToSRTTime(ms) {
+    ms = Math.round(ms);
+    var h = Math.floor(ms / 3600000);
+    var m = Math.floor((ms % 3600000) / 60000);
+    var s = Math.floor((ms % 60000) / 1000);
+    var mill = ms % 1000;
+    function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+    function pad3(n) { return n < 10 ? "00" + n : n < 100 ? "0" + n : "" + n; }
+    return pad2(h) + ":" + pad2(m) + ":" + pad2(s) + "," + pad3(mill);
+}
+
+/**
+ * 자막 SRT 생성 + Premiere 임포트
+ * sentencesJSON: JSON string of sentences array
+ */
+function exportCaptionsAsSRT(sentencesJSON) {
+    try {
+        if (!app.project || !app.project.path) {
+            return '{"success":false,"error":"프로젝트가 저장되지 않았습니다"}';
+        }
+
+        var sentences = eval('(' + sentencesJSON + ')');
+        var projectPath = app.project.path;
+        var folderPath = projectPath.substring(0, projectPath.lastIndexOf('/'));
+
+        // captions 폴더 생성
+        var captionsFolder = new Folder(folderPath + "/captions");
+        if (!captionsFolder.exists) {
+            captionsFolder.create();
+        }
+
+        // 경량 데이터: [{spk, words:[{t, s, e}]}]
+        // 화자별 그룹핑
+        var speakerMap = {};
+        for (var i = 0; i < sentences.length; i++) {
+            var sentence = sentences[i];
+            var spk = (sentence.spk !== undefined && sentence.spk !== null) ? sentence.spk : 0;
+            if (!speakerMap[spk]) {
+                speakerMap[spk] = [];
+            }
+
+            var words = [];
+            var minStart = Infinity;
+            var maxEnd = 0;
+            for (var w = 0; w < sentence.words.length; w++) {
+                var word = sentence.words[w];
+                words.push(word.t);
+                if (word.s < minStart) minStart = word.s;
+                if (word.e > maxEnd) maxEnd = word.e;
+            }
+
+            if (words.length > 0) {
+                speakerMap[spk].push({
+                    text: words.join(" "),
+                    startMs: minStart,
+                    endMs: maxEnd
+                });
+            }
+        }
+
+        // 화자별 SRT 파일 생성
+        var srtFiles = [];
+        var speakerKeys = [];
+        for (var key in speakerMap) {
+            if (speakerMap.hasOwnProperty(key)) {
+                speakerKeys.push(key);
+            }
+        }
+
+        for (var si = 0; si < speakerKeys.length; si++) {
+            var spkKey = speakerKeys[si];
+            var entries = speakerMap[spkKey];
+            var srtContent = "";
+            var crlf = "\r\n";
+
+            for (var ei = 0; ei < entries.length; ei++) {
+                var entry = entries[ei];
+                srtContent += (ei + 1) + crlf;
+                srtContent += msToSRTTime(entry.startMs) + " --> " + msToSRTTime(entry.endMs) + crlf;
+                srtContent += entry.text + crlf + crlf;
+            }
+
+            var srtPath = captionsFolder.fsName + "/speaker" + (parseInt(spkKey, 10) + 1) + ".srt";
+            var srtFile = new File(srtPath);
+            srtFile.encoding = "UTF-8";
+            srtFile.lineFeed = "Unix";
+            srtFile.open("w");
+            srtFile.write("\uFEFF" + srtContent);
+            srtFile.close();
+            srtFiles.push(srtPath);
+        }
+
+        if (srtFiles.length === 0) {
+            return '{"success":false,"error":"내보낼 자막이 없습니다"}';
+        }
+
+        // Premiere 프로젝트에 임포트
+        var rootItem = app.project.rootItem;
+
+        // videoPlus Captions bin 찾기/생성
+        var captionsBin = null;
+        for (var bi = 0; bi < rootItem.children.numItems; bi++) {
+            var child = rootItem.children[bi];
+            if (child.name === "videoPlus Captions" && child.type === 2) {
+                captionsBin = child;
+                break;
+            }
+        }
+        if (!captionsBin) {
+            captionsBin = app.project.rootItem.createBin("videoPlus Captions");
+        }
+
+        // SRT 파일들 임포트
+        var importedCount = 0;
+        for (var fi = 0; fi < srtFiles.length; fi++) {
+            app.project.importFiles([srtFiles[fi]], true, captionsBin, false);
+        }
+
+        // 임포트된 SRT 항목을 시퀀스 캡션 트랙에 추가
+        var seq = app.project.activeSequence;
+        if (seq) {
+            // captionsBin에서 임포트된 SRT 항목 찾기
+            for (var ci = 0; ci < captionsBin.children.numItems; ci++) {
+                var item = captionsBin.children[ci];
+                if (item.name && item.name.indexOf(".srt") !== -1) {
+                    seq.createCaptionTrack(item, 0);
+                    importedCount++;
+                }
+            }
+        }
+
+        return '{"success":true,"speakers":' + speakerKeys.length + ',"files":' + importedCount + '}';
+    } catch (e) {
+        return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
+    }
+}
