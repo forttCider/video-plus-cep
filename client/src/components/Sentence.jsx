@@ -21,6 +21,7 @@ const Sentence = forwardRef(
       searchResultsSet = new Set(),
       currentSearchWordId = null,
       wordRefs = { current: {} },
+      silenceThresholdMs = 1000,
     },
     ref
   ) => {
@@ -38,9 +39,12 @@ const Sentence = forwardRef(
       }
     };
 
+    const isSilenceHidden = (w) =>
+      w.edit_points?.type === "silence" && w.duration < silenceThresholdMs;
+
     // 문장의 선택 가능한 단어들 (0n도 유효한 값으로 처리)
     const selectableWords = sentence.words.filter(
-      (w) => !w.isDeleted && w.start_at_tick !== undefined && w.end_at_tick !== undefined
+      (w) => !w.isDeleted && !isSilenceHidden(w) && w.start_at_tick !== undefined && w.end_at_tick !== undefined
     );
     
     // 문장의 모든 선택 가능한 단어가 선택되었는지 확인
@@ -70,6 +74,7 @@ const Sentence = forwardRef(
           </p>
           <div className="sentence-words">
             {sentence.words.map((word, wordIdx) => {
+              if (isSilenceHidden(word)) return null;
               const isSearchMatch = searchResultsSet.has(word.id);
               const isCurrentSearchMatch = currentSearchWordId === word.id;
               const isFocused = focusedWord?.sentenceIdx === sentenceIdx && 
@@ -129,6 +134,9 @@ export default React.memo(Sentence, (prevProps, nextProps) => {
 
   // searchResultsSet 변경 확인
   if (prevProps.searchResultsSet !== nextProps.searchResultsSet) return false;
+
+  // silenceThresholdMs 변경 확인
+  if (prevProps.silenceThresholdMs !== nextProps.silenceThresholdMs) return false;
 
   return true;
 });

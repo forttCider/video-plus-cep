@@ -45,7 +45,10 @@ import {
   getSequenceFramerate,
 } from "../js/cep-bridge"
 import useAudioUpload from "../hooks/useAudioUpload"
-import initWords, { TICKS_PER_SECOND, secondsToTicksAligned } from "../js/initWords"
+import initWords, {
+  TICKS_PER_SECOND,
+  secondsToTicksAligned,
+} from "../js/initWords"
 import Sentence from "./Sentence"
 import WaveformPanel from "./WaveformPanel"
 import {
@@ -107,9 +110,8 @@ export default function App() {
   const isPlayingStateRef = useRef(false)
   const wordSentenceIdxRef = useRef(new Map())
   const timebaseRef = useRef(8467200000n)
-
   const addLog = useCallback((level, message) => {
-    setLogs(prev => [...prev, { level, message, time: new Date() }])
+    setLogs((prev) => [...prev, { level, message, time: new Date() }])
     setTimeout(() => {
       logPanelRef.current?.scrollTo({ top: logPanelRef.current.scrollHeight })
     }, 50)
@@ -117,9 +119,12 @@ export default function App() {
 
   const clearLogs = useCallback(() => setLogs([]), [])
   const copyLogs = useCallback(() => {
-    const text = logs.map(l =>
-      `[${l.time.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}] ${l.message}`
-    ).join("\n")
+    const text = logs
+      .map(
+        (l) =>
+          `[${l.time.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}] ${l.message}`,
+      )
+      .join("\n")
     const textarea = document.createElement("textarea")
     textarea.value = text
     textarea.style.position = "fixed"
@@ -130,6 +135,20 @@ export default function App() {
     document.body.removeChild(textarea)
     addLog("info", "로그가 클립보드에 복사되었습니다")
   }, [logs, addLog])
+
+  // 슬라이더 threshold (ms)
+  const silenceThresholdMs = React.useMemo(
+    () => Math.round((parseFloat(silenceSeconds) || 1) * 1000),
+    [silenceSeconds],
+  )
+
+  // 숨겨진 무음 판별 헬퍼
+  const isSilenceHidden = useCallback(
+    (word) =>
+      word.edit_points?.type === "silence" &&
+      word.duration < silenceThresholdMs,
+    [silenceThresholdMs],
+  )
 
   useEffect(() => {
     sentencesRef.current = sentences
@@ -176,10 +195,14 @@ export default function App() {
               timelineIndexRef.current,
               result.seconds,
             )
-            if (found?.word && found.word.start_at !== currentWordIdRef.current) {
+            if (
+              found?.word &&
+              found.word.start_at !== currentWordIdRef.current
+            ) {
               currentWordIdRef.current = found.word.start_at
               setCurrentWordId(found.word.start_at)
-              const sIdx = wordSentenceIdxRef.current.get(found.word.start_at) ?? null
+              const sIdx =
+                wordSentenceIdxRef.current.get(found.word.start_at) ?? null
               setCurrentWordSentenceIdx(sIdx)
             }
           }
@@ -230,7 +253,8 @@ export default function App() {
           w = 0
         }
         const word = sentences[s]?.words?.[w]
-        if (word && !word.isDeleted) return { sentenceIdx: s, wordIdx: w, word }
+        if (word && !word.isDeleted && !isSilenceHidden(word))
+          return { sentenceIdx: s, wordIdx: w, word }
         w++
         iterations++
       }
@@ -251,7 +275,8 @@ export default function App() {
           w = (sentences[s]?.words?.length || 1) - 1
         }
         const word = sentences[s]?.words?.[w]
-        if (word && !word.isDeleted) return { sentenceIdx: s, wordIdx: w, word }
+        if (word && !word.isDeleted && !isSilenceHidden(word))
+          return { sentenceIdx: s, wordIdx: w, word }
         w--
         iterations++
       }
@@ -286,7 +311,7 @@ export default function App() {
       let currentLine = []
       let currentY = null
       sentence.words?.forEach((word, idx) => {
-        if (word.isDeleted) return
+        if (word.isDeleted || isSilenceHidden(word)) return
         const el = wordRefs.current[word.start_at]
         if (!el) return
         const y = Math.round(el.getBoundingClientRect().top)
@@ -305,7 +330,7 @@ export default function App() {
 
     const findFirstNonDeletedWord = (sentence) => {
       for (let i = 0; i < (sentence.words?.length || 0); i++) {
-        if (!sentence.words[i].isDeleted)
+        if (!sentence.words[i].isDeleted && !isSilenceHidden(sentence.words[i]))
           return { idx: i, word: sentence.words[i] }
       }
       return null
@@ -433,8 +458,14 @@ export default function App() {
               start_at: newStart,
               end_at: newEnd,
               // tick 값도 업데이트 (프레임 정렬됨)
-              start_at_tick: secondsToTicksAligned(newStart / 1000, timebaseRef.current),
-              end_at_tick: secondsToTicksAligned(newEnd / 1000, timebaseRef.current),
+              start_at_tick: secondsToTicksAligned(
+                newStart / 1000,
+                timebaseRef.current,
+              ),
+              end_at_tick: secondsToTicksAligned(
+                newEnd / 1000,
+                timebaseRef.current,
+              ),
             }
           }
           return word
@@ -457,7 +488,8 @@ export default function App() {
       )
       if (found?.word) {
         // sentenceIdx/wordIdx 찾기
-        let sIdx = -1, wIdx = -1
+        let sIdx = -1,
+          wIdx = -1
         sentencesRef.current.forEach((s, si) => {
           s.words?.forEach((w, wi) => {
             if (w.start_at === found.word.start_at) {
@@ -525,17 +557,15 @@ export default function App() {
         )
       }
       batchAbortRef.current = new AbortController()
-      const {
-        deletedWordIds: actuallyDeleted,
-        wordGaps,
-      } = await batchDeleteWords(
-        filterFn,
-        sentencesRef.current,
-        (current, total) =>
-          setBatchProgress({ current, total, label: "일괄 적용" }),
-        addLog,
-        batchAbortRef.current.signal,
-      )
+      const { deletedWordIds: actuallyDeleted, wordGaps } =
+        await batchDeleteWords(
+          filterFn,
+          sentencesRef.current,
+          (current, total) =>
+            setBatchProgress({ current, total, label: "일괄 적용" }),
+          addLog,
+          batchAbortRef.current.signal,
+        )
       if (actuallyDeleted.size > 0) {
         const updated = applyDeleteResult(
           sentencesRef.current,
@@ -546,9 +576,11 @@ export default function App() {
         setSentences(updated)
         setSelectedWordIds(new Set())
         const aborted = batchAbortRef.current?.signal?.aborted
-        setStatus(aborted
-          ? `중단됨: ${actuallyDeleted.size}개 삭제 완료`
-          : `일괄 적용 완료: ${actuallyDeleted.size}개 단어`)
+        setStatus(
+          aborted
+            ? `중단됨: ${actuallyDeleted.size}개 삭제 완료`
+            : `일괄 적용 완료: ${actuallyDeleted.size}개 단어`,
+        )
       } else setStatus("적용할 단어가 없습니다")
     } catch (error) {
       setStatus("일괄 적용 실패: " + error.message)
@@ -634,6 +666,7 @@ export default function App() {
         if (
           !word.isDeleted &&
           word.edit_points?.type === "silence" &&
+          word.duration >= silenceThresholdMs &&
           word.start_at_tick !== undefined &&
           word.end_at_tick !== undefined
         ) {
@@ -642,7 +675,7 @@ export default function App() {
       })
     })
     return ids
-  }, [sentences])
+  }, [sentences, silenceThresholdMs])
 
   const fillerWordIds = React.useMemo(() => {
     const ids = new Set()
@@ -712,8 +745,9 @@ export default function App() {
     setStatus("받아쓰기 결과 가져오는 중...")
     // console.log(taskId)
     try {
-      const silenceMs = Math.round((parseFloat(silenceSeconds) || 1) * 1000)
-      const response = await fetch(`${API_URL}/transcribe/cut/${taskId}?silence_ms=${silenceMs}`)
+      const response = await fetch(
+        `${API_URL}/transcribe/cut/${taskId}?silence_ms=500`,
+      )
       if (!response.ok) {
         setStatus("결과 가져오기 실패: " + response.status)
         return
@@ -748,7 +782,9 @@ export default function App() {
               parentId: sentenceId,
               isEdit: true,
               silence_seconds: word.edit_points.silence_seconds,
-              frameCount: Math.round(word.edit_points.duration_ms / 1000 * fps),
+              frameCount: Math.round(
+                (word.edit_points.duration_ms / 1000) * fps,
+              ),
               isDeleted: false,
               isHighlight: false,
             }
@@ -771,7 +807,10 @@ export default function App() {
                 parentId: sentenceId,
                 isEdit: true,
                 silence_seconds: editPoint.silence_seconds,
-                frameCount: Math.round(editPoint.duration_ms / 1000 * Number(TICKS_PER_SECOND) / Number(timebaseRef.current)),
+                frameCount: Math.round(
+                  ((editPoint.duration_ms / 1000) * Number(TICKS_PER_SECOND)) /
+                    Number(timebaseRef.current),
+                ),
                 isDeleted: false,
                 isHighlight: false,
               },
@@ -949,7 +988,13 @@ export default function App() {
             v{getExtensionVersion()}
           </Badge>
           <Badge
-            variant={sequenceInfo ? "default" : isRefreshing ? "secondary" : "destructive"}
+            variant={
+              sequenceInfo
+                ? "default"
+                : isRefreshing
+                  ? "secondary"
+                  : "destructive"
+            }
             className="gap-1"
           >
             {isRefreshing ? (
@@ -963,6 +1008,18 @@ export default function App() {
                 ? `연결됨 · ${sequenceInfo.name}`
                 : "시퀀스 연결 안됨"}
           </Badge>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={loadSequenceInfo}
+            disabled={isRefreshing}
+            title="시퀀스 새로고침"
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`}
+            />
+          </Button>
         </div>
       </div>
 
@@ -977,7 +1034,9 @@ export default function App() {
               className="h-6 gap-1 px-2"
               onClick={loadSequenceInfo}
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`}
+              />
               새로고침
             </Button>
           )}
@@ -1040,25 +1099,51 @@ export default function App() {
       {logs.length > 0 && (
         <Card className="mb-3 flex-shrink-0">
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-border">
-            <span className="text-xs text-muted-foreground font-mono">로그 ({logs.length})</span>
+            <span className="text-xs text-muted-foreground font-mono">
+              로그 ({logs.length})
+            </span>
             <div className="flex gap-1">
-              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={copyLogs} title="로그 복사">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5"
+                onClick={copyLogs}
+                title="로그 복사"
+              >
                 <ClipboardCopy className="h-3 w-3" />
               </Button>
-              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={clearLogs} title="로그 삭제">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5"
+                onClick={clearLogs}
+                title="로그 삭제"
+              >
                 <X className="h-3 w-3" />
               </Button>
             </div>
           </div>
-          <div ref={logPanelRef} className="h-[100px] overflow-y-auto p-2 font-mono text-[11px]">
+          <div
+            ref={logPanelRef}
+            className="h-[100px] overflow-y-auto p-2 font-mono text-[11px]"
+          >
             {logs.map((log, i) => (
-              <div key={i} className={`leading-relaxed break-all ${
-                log.level === "error" ? "text-red-400" :
-                log.level === "warn" ? "text-yellow-400" :
-                "text-green-400"
-              }`}>
+              <div
+                key={i}
+                className={`leading-relaxed break-all ${
+                  log.level === "error"
+                    ? "text-red-400"
+                    : log.level === "warn"
+                      ? "text-yellow-400"
+                      : "text-green-400"
+                }`}
+              >
                 <span className="text-muted-foreground mr-1.5">
-                  {log.time.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                  {log.time.toLocaleTimeString("ko-KR", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })}
                 </span>
                 {log.message}
               </div>
@@ -1069,29 +1154,37 @@ export default function App() {
 
       {/* 액션 버튼 */}
       <div className="flex flex-wrap gap-2 mb-3 items-center">
-        <div className="flex items-center gap-2 w-full mb-1">
-          <span className="text-xs text-muted-foreground whitespace-nowrap">최소 무음 길이</span>
-          <Slider
-            value={[isNaN(parseFloat(silenceSeconds)) ? 0 : parseFloat(silenceSeconds)]}
-            onValueChange={([v]) => setSilenceSeconds(String(v))}
-            min={0}
-            max={10}
-            step={0.05}
-            disabled={isUpload}
-            className="flex-1"
-          />
-          <Input
-            type="number"
-            step="0.05"
-            min="0"
-            max="10"
-            value={silenceSeconds}
-            onChange={(e) => setSilenceSeconds(e.target.value)}
-            disabled={isUpload}
-            className="w-[70px] h-7 text-xs text-center"
-          />
-          <span className="text-xs text-muted-foreground">seconds</span>
-        </div>
+        {sentences.length > 0 && (
+          <div className="flex items-center gap-2 w-full mb-1">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              최소 무음 길이
+            </span>
+            <Slider
+              value={[
+                isNaN(parseFloat(silenceSeconds))
+                  ? 1
+                  : parseFloat(silenceSeconds),
+              ]}
+              onValueChange={([v]) => setSilenceSeconds(String(v))}
+              min={0.5}
+              max={5}
+              step={0.05}
+              disabled={isUpload}
+              className="flex-1"
+            />
+            <Input
+              type="number"
+              step="0.05"
+              min="0.5"
+              max="5"
+              value={silenceSeconds}
+              onChange={(e) => setSilenceSeconds(e.target.value)}
+              disabled={isUpload}
+              className="w-[70px] h-7 text-xs text-center"
+            />
+            <span className="text-xs text-muted-foreground">seconds</span>
+          </div>
+        )}
         <Button
           size="sm"
           disabled={!isConnected || isUpload}
@@ -1176,6 +1269,7 @@ export default function App() {
                 searchResultsSet={searchResultsSet}
                 currentSearchWordId={currentSearchWordId}
                 wordRefs={wordRefs}
+                silenceThresholdMs={silenceThresholdMs}
               />
             ))
           ) : (
@@ -1344,6 +1438,7 @@ export default function App() {
         onSeek={handleWaveformSeek}
         isPlaying={isPlayingState}
         isUpload={isUpload}
+        silenceThresholdMs={silenceThresholdMs}
       />
     </div>
   )

@@ -13,6 +13,7 @@ export default function WaveformPanel({
   onSeek,
   isPlaying,
   isUpload,
+  silenceThresholdMs = 1000,
 }) {
   const containerRef = useRef(null)
   const wavesurferRef = useRef(null)
@@ -42,6 +43,7 @@ export default function WaveformPanel({
       sentence.words?.forEach((word, wIdx) => {
         if (
           !word.isDeleted &&
+          !(word.edit_points?.type === "silence" && word.duration < silenceThresholdMs) &&
           word.start_at !== undefined &&
           word.end_at !== undefined
         ) {
@@ -57,7 +59,7 @@ export default function WaveformPanel({
       })
     })
     return words
-  }, [sentences])
+  }, [sentences, silenceThresholdMs])
 
   // 🔥 현재 단어만 빠르게 찾기 위한 인덱스 (Map으로 O(1) 조회)
   const wordTimeIndex = useMemo(() => {
