@@ -94,6 +94,7 @@ export default function App() {
   const [backupList, setBackupList] = useState([])
   const [restoreConfirm, setRestoreConfirm] = useState(null)
   const [focusedWord, setFocusedWord] = useState(null)
+  const [editingWord, setEditingWord] = useState(null) // { sentenceIdx, wordIdx }
   const [audioPath, setAudioPath] = useState(null) // 파형 표시용 오디오 경로
   const [silenceSeconds, setSilenceSeconds] = useState("1")
   const [showProcessingModal, setShowProcessingModal] = useState(false)
@@ -225,6 +226,7 @@ export default function App() {
   const handleKeyDown = (e) => {
     if (!sentencesRef.current || sentencesRef.current.length === 0) return
     if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return
+    if (editingWord) return // 편집 모드 중에는 키보드 네비게이션 비활성화
     const sentences = sentencesRef.current
     const currentSentenceIdx = focusedWord?.sentenceIdx ?? 0
     const currentWordIdx = focusedWord?.wordIdx ?? 0
@@ -441,10 +443,177 @@ export default function App() {
         return newSet
       })
     }
+    // N키: 이전 문장 경계 토글
+    const isN = key === "n" || key === "ㅜ"
+    if (isN && focusedWord) {
+      e.preventDefault()
+      handleToggleBoundaryBefore(focusedWord)
+    }
+
+    // M키: 다음 문장 경계 토글
+    const isM = key === "m" || key === "ㅡ"
+    if (isM && focusedWord) {
+      e.preventDefault()
+      handleToggleBoundaryAfter(focusedWord)
+    }
+
+    // Enter키: 단어 텍스트 편집
+    const isEnter = key === "enter" || keyCode === 13
+    if (isEnter && focusedWord) {
+      e.preventDefault()
+      const word = sentences[focusedWord.sentenceIdx]?.words?.[focusedWord.wordIdx]
+      if (word && !word.isDeleted && !word.isEdit) {
+        setEditingWord(focusedWord)
+      }
+    }
+
     if (isSpace) {
       e.preventDefault()
       togglePlayback().catch(() => {})
     }
+  }
+
+  // 문장 시간 재계산 헬퍼
+  const recalcSentenceTime = (sentence) => {
+    const activeWords = sentence.words.filter((w) => !w.isDeleted && w.text)
+    if (activeWords.length === 0) return sentence
+    const first = activeWords[0]
+    const last = activeWords[activeWords.length - 1]
+    return {
+      ...sentence,
+      start_time: first.start_time || sentence.start_time,
+      end_time: last.end_time || sentence.end_time,
+    }
+  }
+
+  // N키: 포커스 단어 앞 문장 경계 토글
+  const handleToggleBoundaryBefore = (focused) => {
+    if (!focused) return
+    const { sentenceIdx: sIdx, wordIdx: wIdx } = focused
+    const sentences = sentencesRef.current
+    const sentence = sentences[sIdx]
+    if (!sentence) return
+
+    // 첫 번째 visible 단어인지 확인
+    const firstVisibleIdx = sentence.words.findIndex(
+      (w) => !w.isDeleted && !isSilenceHidden(w),
+    )
+    const isFirstWord = wIdx <= firstVisibleIdx
+
+    if (isFirstWord && sIdx > 0) {
+      // 이전 문장과 합치기
+      const prevSentence = sentences[sIdx - 1]
+      const merged = recalcSentenceTime({
+        ...prevSentence,
+        words: [
+          ...prevSentence.words,
+          ...sentence.words.map((w) => ({ ...w, parentId: prevSentence.id })),
+        ],
+      })
+      const newSentences = sentences.filter((_, i) => i !== sIdx)
+      newSentences[sIdx - 1] = merged
+      setSentences(newSentences)
+      setFocusedWord({
+        sentenceIdx: sIdx - 1,
+        wordIdx: prevSentence.words.length + wIdx,
+      })
+    } else if (!isFirstWord) {
+      // 이 단어 앞에서 분리
+      const newSentenceId = generateRandomId()
+      const beforeWords = sentence.words.slice(0, wIdx)
+      const afterWords = sentence.words
+        .slice(wIdx)
+        .map((w) => ({ ...w, parentId: newSentenceId }))
+      const updatedCurrent = recalcSentenceTime({ ...sentence, words: beforeWords })
+      const newSentence = recalcSentenceTime({
+        ...sentence,
+        id: newSentenceId,
+        words: afterWords,
+      })
+      const newSentences = [...sentences]
+      newSentences.splice(sIdx, 1, updatedCurrent, newSentence)
+      setSentences(newSentences)
+      setFocusedWord({ sentenceIdx: sIdx + 1, wordIdx: 0 })
+    }
+  }
+
+  // M키: 포커스 단어 뒤 문장 경계 토글
+  const handleToggleBoundaryAfter = (focused) => {
+    if (!focused) return
+    const { sentenceIdx: sIdx, wordIdx: wIdx } = focused
+    const sentences = sentencesRef.current
+    const sentence = sentences[sIdx]
+    if (!sentence) return
+
+    // 마지막 visible 단어인지 확인
+    let lastVisibleIdx = -1
+    sentence.words.forEach((w, i) => {
+      if (!w.isDeleted && !isSilenceHidden(w)) lastVisibleIdx = i
+    })
+    const isLastWord = wIdx >= lastVisibleIdx
+
+    if (isLastWord && sIdx < sentences.length - 1) {
+      // 다음 문장과 합치기
+      const nextSentence = sentences[sIdx + 1]
+      const merged = recalcSentenceTime({
+        ...sentence,
+        words: [
+          ...sentence.words,
+          ...nextSentence.words.map((w) => ({ ...w, parentId: sentence.id })),
+        ],
+      })
+      const newSentences = sentences.filter((_, i) => i !== sIdx + 1)
+      newSentences[sIdx] = merged
+      setSentences(newSentences)
+      setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
+    } else if (!isLastWord) {
+      // 이 단어 뒤에서 분리
+      const newSentenceId = generateRandomId()
+      const beforeWords = sentence.words.slice(0, wIdx + 1)
+      const afterWords = sentence.words
+        .slice(wIdx + 1)
+        .map((w) => ({ ...w, parentId: newSentenceId }))
+      const updatedCurrent = recalcSentenceTime({ ...sentence, words: beforeWords })
+      const newSentence = recalcSentenceTime({
+        ...sentence,
+        id: newSentenceId,
+        words: afterWords,
+      })
+      const newSentences = [...sentences]
+      newSentences.splice(sIdx, 1, updatedCurrent, newSentence)
+      setSentences(newSentences)
+      setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
+    }
+  }
+
+  // 단어 텍스트 편집 시작
+  const handleStartEditing = (sentenceIdx, wordIdx) => {
+    setEditingWord({ sentenceIdx, wordIdx })
+  }
+
+  // 화자 변경
+  const handleChangeSpk = (sentenceIdx, newSpk) => {
+    setSentences((prev) =>
+      prev.map((s, i) => (i === sentenceIdx ? { ...s, spk: newSpk } : s)),
+    )
+  }
+
+  // 단어 텍스트 업데이트
+  const handleWordTextUpdate = (sentenceIdx, wordIdx, newText) => {
+    setEditingWord(null)
+    if (newText === null) return // 취소 또는 변경 없음
+    setSentences((prev) =>
+      prev.map((s, si) =>
+        si !== sentenceIdx
+          ? s
+          : {
+              ...s,
+              words: s.words.map((w, wi) =>
+                wi !== wordIdx ? w : { ...w, text: newText },
+              ),
+            },
+      ),
+    )
   }
 
   // 파형에서 단어 구간 드래그로 변경 시
@@ -524,7 +693,8 @@ export default function App() {
     const result = getTimelinePositionTick(word, sentencesRef.current)
     if (result?.startTick !== undefined)
       await setPlayerPositionByTicks(result.startTick.toString())
-    containerRef.current?.focus()
+    // 편집 모드가 아닐 때만 컨테이너로 포커스 이동
+    if (!editingWord) containerRef.current?.focus()
   }
 
   const handleApplySelected = async () => {
@@ -1292,6 +1462,10 @@ export default function App() {
                 currentSearchWordId={currentSearchWordId}
                 wordRefs={wordRefs}
                 silenceThresholdMs={silenceThresholdMs}
+                editingWord={editingWord}
+                onStartEditing={handleStartEditing}
+                onWordTextUpdate={handleWordTextUpdate}
+                onChangeSpk={handleChangeSpk}
               />
             ))
           ) : (
@@ -1431,7 +1605,19 @@ export default function App() {
       </Dialog>
 
       {/* 적용 버튼 */}
-      <div className="flex justify-end mt-2">
+      <div className="flex justify-between mt-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="caption-export-btn"
+          disabled={
+            sentences.length === 0 || !isConnected || isUpload || isProcessing
+          }
+          onClick={handleExportCaptions}
+        >
+          <Subtitles className="h-4 w-4 mr-2" />
+          자막 시퀀스에 적용
+        </Button>
         <Button
           variant={selectedWordIds.size > 0 ? "default" : "secondary"}
           size="sm"
@@ -1446,17 +1632,6 @@ export default function App() {
           <Scissors className="h-4 w-4 mr-2" />
           시퀀스에 적용{" "}
           {selectedWordIds.size > 0 && `(${selectedWordIds.size})`}
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={
-            sentences.length === 0 || !isConnected || isUpload || isProcessing
-          }
-          onClick={handleExportCaptions}
-        >
-          <Subtitles className="h-4 w-4 mr-2" />
-          자막 내보내기
         </Button>
       </div>
 

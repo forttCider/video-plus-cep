@@ -55,3 +55,9 @@
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--muted-foreground));
 }
+
+/* 자막 시퀀스 적용 버튼 */
+.caption-export-btn:hover:not(:disabled) {
+  background: #fff !important;
+  color: hsl(var(--background)) !important;
+}

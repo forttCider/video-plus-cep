@@ -22,6 +22,10 @@ const Sentence = forwardRef(
       currentSearchWordId = null,
       wordRefs = { current: {} },
       silenceThresholdMs = 1000,
+      editingWord = null,
+      onStartEditing,
+      onWordTextUpdate,
+      onChangeSpk,
     },
     ref
   ) => {
@@ -66,7 +70,17 @@ const Sentence = forwardRef(
               <Play size={14} />
             </p>
           </div>
-          <p className="sentence-spk"><Mic size={12} /> {(sentence.spk || 0) + 1}</p>
+          <div className="sentence-spk">
+            <Mic size={12} />
+            <select
+              className="spk-select"
+              value={sentence.spk || 0}
+              onChange={(e) => onChangeSpk?.(sentenceIdx, parseInt(e.target.value, 10))}
+            >
+              <option value={0}>1</option>
+              <option value={1}>2</option>
+            </select>
+          </div>
         </div>
         <div className="sentence-info">
           <p>
@@ -81,6 +95,8 @@ const Sentence = forwardRef(
                                focusedWord?.wordIdx === wordIdx;
               const wordId = word.id || word.start_at;
               const isSelected = selectedWordIds.has(wordId);
+              const isEditingThis = editingWord?.sentenceIdx === sentenceIdx &&
+                                    editingWord?.wordIdx === wordIdx;
               return (
                 <Word
                   key={word.id}
@@ -90,7 +106,15 @@ const Sentence = forwardRef(
                   isSelected={isSelected}
                   isSearchMatch={isSearchMatch}
                   isCurrentSearchMatch={isCurrentSearchMatch}
-                  onClick={() => onWordClick(word)}
+                  isEditing={isEditingThis}
+                  onClick={(e) => {
+                    if (e.detail >= 2) {
+                      onStartEditing?.(sentenceIdx, wordIdx);
+                      return;
+                    }
+                    onWordClick(word);
+                  }}
+                  onTextUpdate={(newText) => onWordTextUpdate?.(sentenceIdx, wordIdx, newText)}
                   ref={(el) => (wordRefs.current[word.start_at] = el)}
                 />
               );
@@ -137,6 +161,13 @@ export default React.memo(Sentence, (prevProps, nextProps) => {
 
   // silenceThresholdMs 변경 확인
   if (prevProps.silenceThresholdMs !== nextProps.silenceThresholdMs) return false;
+
+  // editingWord가 이 문장에 해당하는지 확인
+  const prevHasEditing = prevProps.editingWord?.sentenceIdx === prevProps.sentenceIdx;
+  const nextHasEditing = nextProps.editingWord?.sentenceIdx === nextProps.sentenceIdx;
+  if (prevHasEditing !== nextHasEditing) return false;
+  if (prevHasEditing && prevProps.editingWord?.wordIdx !== nextProps.editingWord?.wordIdx)
+    return false;
 
   return true;
 });

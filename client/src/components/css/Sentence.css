@@ -78,6 +78,22 @@
   padding: 4px 6px;
 }
 
+.spk-select {
+  background: transparent;
+  color: #4caf50;
+  border: 1px solid #4caf50;
+  border-radius: 3px;
+  font-size: 12px;
+  padding: 0 2px;
+  cursor: pointer;
+  outline: none;
+}
+
+.spk-select option {
+  background: #1e1e1e;
+  color: #fff;
+}
+
 .sentence-play {
   display: flex;
   align-items: center;
