@@ -5,6 +5,8 @@ import "./css/WaveformPanel.css"
 
 export default function WaveformPanel({
   audioPath,
+  peaks,
+  peaksDuration,
   sentences,
   currentWordId,
   currentTime,
@@ -26,6 +28,7 @@ export default function WaveformPanel({
   const isInternalSeekRef = useRef(false)
   const lastRegionUpdateRef = useRef(0)
   const rafRef = useRef(null)
+  const scrollToCursorRef = useRef(null)
   const [isReady, setIsReady] = useState(false)
   const [isRegionsLoading, setIsRegionsLoading] = useState(false)
   const [duration, setDuration] = useState(0)
@@ -43,7 +46,10 @@ export default function WaveformPanel({
       sentence.words?.forEach((word, wIdx) => {
         if (
           !word.isDeleted &&
-          !(word.edit_points?.type === "silence" && word.duration < silenceThresholdMs) &&
+          !(
+            word.edit_points?.type === "silence" &&
+            word.duration < silenceThresholdMs
+          ) &&
           word.start_at !== undefined &&
           word.end_at !== undefined
         ) {
@@ -64,21 +70,23 @@ export default function WaveformPanel({
   // 🔥 현재 단어만 빠르게 찾기 위한 인덱스 (Map으로 O(1) 조회)
   const wordTimeIndex = useMemo(() => {
     const map = new Map()
-    allWords.forEach(w => map.set(String(w.id), { start: w.startSec, end: w.endSec }))
+    allWords.forEach((w) =>
+      map.set(String(w.id), { start: w.startSec, end: w.endSec }),
+    )
     return map
   }, [allWords])
 
   // 🔥 각 단어의 드래그 경계 계산 (이전 단어 끝 ~ 다음 단어 시작)
   useEffect(() => {
     wordBoundsRef.current.clear()
-    
+
     // 시간순 정렬
     const sorted = [...allWords].sort((a, b) => a.startSec - b.startSec)
-    
+
     sorted.forEach((word, idx) => {
       const prevWord = sorted[idx - 1]
       const nextWord = sorted[idx + 1]
-      
+
       wordBoundsRef.current.set(String(word.id), {
         minStart: prevWord ? prevWord.endSec : 0,
         maxEnd: nextWord ? nextWord.startSec : duration || 9999,
@@ -121,13 +129,17 @@ export default function WaveformPanel({
         const wrapper = ws.drawer?.wrapper
         if (wrapper) {
           let scrollTimeout = null
-          wrapper.addEventListener("scroll", () => {
-            if (scrollTimeout) return
-            scrollTimeout = setTimeout(() => {
-              setScrollTrigger((n) => n + 1)
-              scrollTimeout = null
-            }, 300)
-          }, { passive: true })
+          wrapper.addEventListener(
+            "scroll",
+            () => {
+              if (scrollTimeout) return
+              scrollTimeout = setTimeout(() => {
+                setScrollTrigger((n) => n + 1)
+                scrollTimeout = null
+              }, 300)
+            },
+            { passive: true },
+          )
         }
       }, 500)
     })
@@ -152,35 +164,35 @@ export default function WaveformPanel({
     // 🔥 드래그 중 범위 제한
     ws.on("region-updated", (region) => {
       isDraggingRef.current = true
-      
+
       const bounds = wordBoundsRef.current.get(region.id)
       if (!bounds) return
-      
+
       let clamped = false
       let clampSide = null
-      
+
       // 왼쪽 핸들 제한 (start가 이전 단어 끝보다 작으면 안 됨)
       if (region.start < bounds.minStart) {
         region.start = bounds.minStart
         clamped = true
-        clampSide = 'left'
+        clampSide = "left"
       }
-      
+
       // 오른쪽 핸들 제한 (end가 다음 단어 시작보다 크면 안 됨)
       if (region.end > bounds.maxEnd) {
         region.end = bounds.maxEnd
         clamped = true
-        clampSide = 'right'
+        clampSide = "right"
       }
-      
+
       // 경계에 닿으면 빨간색 flash
       if (clamped && region.element) {
-        const handles = region.element.querySelectorAll('.wavesurfer-handle')
-        const handle = clampSide === 'left' ? handles[0] : handles[1]
+        const handles = region.element.querySelectorAll(".wavesurfer-handle")
+        const handle = clampSide === "left" ? handles[0] : handles[1]
         if (handle) {
-          handle.classList.add('handle-limit')
+          handle.classList.add("handle-limit")
           setTimeout(() => {
-            handle.classList.remove('handle-limit')
+            handle.classList.remove("handle-limit")
           }, 300)
         }
       }
@@ -197,6 +209,8 @@ export default function WaveformPanel({
       if (isDraggingRef.current || isInternalSeekRef.current) return
       const time = progress * ws.getDuration()
       if (onSeekRef.current) onSeekRef.current(time)
+      // 파형 클릭 시 왼쪽 10% 위치로 스크롤
+      if (scrollToCursorRef.current) scrollToCursorRef.current(time, true)
     })
 
     return () => {
@@ -210,23 +224,56 @@ export default function WaveformPanel({
 
   // 오디오 파일 로드
   useEffect(() => {
-    if (!audioPath || !wavesurferRef.current) return
+    if (!wavesurferRef.current) return
+    if (!audioPath && !(peaks && peaks.length > 0)) return
 
     setIsReady(false)
     activeRegionsRef.current.clear()
     wavesurferRef.current.clearRegions()
 
-    let url = audioPath
-    if (
-      !audioPath.startsWith("blob:") &&
-      !audioPath.startsWith("http") &&
-      !audioPath.startsWith("file://")
-    ) {
-      url = `file://${audioPath}`
+    // peaks가 있고 audioPath가 없으면 → peaks만으로 파형 렌더링 (오디오 불필요)
+    if (peaks && peaks.length > 0 && !audioPath) {
+      const ws = wavesurferRef.current
+      ws.backend.peaks = peaks
+      ws.backend.getPlayedPercents = () => 0
+      ws.backend.getDuration = () => peaksDuration
+      setDuration(peaksDuration)
+      ws.drawBuffer()
+      ws.zoom(200)
+      setTimeout(() => {
+        setIsReady(true)
+        setIsRegionsLoading(true)
+        const wrapper = ws.drawer?.wrapper
+        if (wrapper) {
+          let scrollTimeout = null
+          wrapper.addEventListener(
+            "scroll",
+            () => {
+              if (scrollTimeout) return
+              scrollTimeout = setTimeout(() => {
+                setScrollTrigger((n) => n + 1)
+                scrollTimeout = null
+              }, 300)
+            },
+            { passive: true },
+          )
+        }
+      }, 500)
+      return
     }
 
-    wavesurferRef.current.load(url)
-  }, [audioPath])
+    if (!audioPath) return
+
+    if (audioPath.startsWith("http")) {
+      wavesurferRef.current.load(audioPath)
+    } else {
+      let url = audioPath
+      if (!audioPath.startsWith("blob:") && !audioPath.startsWith("file://")) {
+        url = `file://${audioPath}`
+      }
+      wavesurferRef.current.load(url)
+    }
+  }, [audioPath, peaks])
 
   // 🔥 다시 받아쓰기 시 이전 regions 정리
   useEffect(() => {
@@ -238,21 +285,24 @@ export default function WaveformPanel({
   }, [isUpload])
 
   // 현재 단어 하이라이트만 빠르게 업데이트
-  const updateCurrentWordHighlight = useCallback((time) => {
-    if (!activeRegionsRef.current.size) return
+  const updateCurrentWordHighlight = useCallback(
+    (time) => {
+      if (!activeRegionsRef.current.size) return
 
-    activeRegionsRef.current.forEach((region, id) => {
-      const word = wordTimeIndex.get(id)
-      if (!word) return
+      activeRegionsRef.current.forEach((region, id) => {
+        const word = wordTimeIndex.get(id)
+        if (!word) return
 
-      const isCurrent = time >= word.start && time < word.end
-      if (region.element) {
-        region.element.style.backgroundColor = isCurrent
-          ? "rgba(255, 230, 0, 0.25)"
-          : "rgba(100, 100, 100, 0.1)"
-      }
-    })
-  }, [wordTimeIndex])
+        const isCurrent = time >= word.start && time < word.end
+        if (region.element) {
+          region.element.style.backgroundColor = isCurrent
+            ? "rgba(255, 230, 0, 0.25)"
+            : "rgba(100, 100, 100, 0.1)"
+        }
+      })
+    },
+    [wordTimeIndex],
+  )
 
   // regions 전체 업데이트 (스크롤/초기화 시에만)
   useEffect(() => {
@@ -314,9 +364,10 @@ export default function WaveformPanel({
         if (region.element) {
           const label = document.createElement("span")
           // 🔥 무음일 때만 edit_points.reason 표시
-          label.textContent = word.edit_points?.type === "silence" 
-            ? (word.edit_points?.reason || "무음")
-            : word.text
+          label.textContent =
+            word.edit_points?.type === "silence"
+              ? word.edit_points?.reason || "무음"
+              : word.text
           label.style.cssText =
             "position:absolute;top:2px;left:4px;font-size:11px;color:#fff;white-space:nowrap;pointer-events:none;text-shadow:0 0 2px #000;"
           region.element.appendChild(label)
@@ -331,7 +382,7 @@ export default function WaveformPanel({
         }
       }
     })
-    
+
     // 🔥 region 로딩 완료 (단어가 있을 때만)
     if (allWords.length > 0 && activeRegionsRef.current.size > 0) {
       setIsRegionsLoading(false)
@@ -357,11 +408,11 @@ export default function WaveformPanel({
     const scrollLeft = wrapper.scrollLeft
 
     if (forceCenter) {
-      // 단어 클릭 시 가운데로
-      const scrollPos = cursorPos - clientWidth / 2
+      // 단어/파형 클릭 시 왼쪽 10% 위치에 놓기
+      const scrollPos = cursorPos - clientWidth * 0.1
       wrapper.scrollTo({
         left: Math.max(0, scrollPos),
-        behavior: 'auto'
+        behavior: "auto",
       })
     } else {
       // 🔥 재생 중: 커서가 보이는 영역 밖이면 스크롤
@@ -372,11 +423,16 @@ export default function WaveformPanel({
         const scrollPos = cursorPos - clientWidth * 0.1
         wrapper.scrollTo({
           left: Math.max(0, scrollPos),
-          behavior: 'auto'
+          behavior: "auto",
         })
       }
     }
   }, [])
+
+  // scrollToCursor를 ref에 저장 (초기화 시점의 이벤트에서 접근 가능)
+  useEffect(() => {
+    scrollToCursorRef.current = scrollToCursor
+  }, [scrollToCursor])
 
   // 재생 중 커서 업데이트
   useEffect(() => {
@@ -391,7 +447,9 @@ export default function WaveformPanel({
       rafRef.current = requestAnimationFrame(() => {
         isInternalSeekRef.current = true
         wavesurferRef.current.seekTo(progress)
-        setTimeout(() => { isInternalSeekRef.current = false }, 30)
+        setTimeout(() => {
+          isInternalSeekRef.current = false
+        }, 30)
         updateCurrentWordHighlight(currentTime)
         scrollToCursor(currentTime, false) // 🔥 페이지 넘기기 방식
       })
@@ -410,7 +468,14 @@ export default function WaveformPanel({
       lastRegionUpdateRef.current = now
       setScrollTrigger((n) => n + 1)
     }
-  }, [currentTime, isReady, duration, isPlaying, updateCurrentWordHighlight, scrollToCursor])
+  }, [
+    currentTime,
+    isReady,
+    duration,
+    isPlaying,
+    updateCurrentWordHighlight,
+    scrollToCursor,
+  ])
 
   // 단어 클릭(포커스) 시
   useEffect(() => {
@@ -445,25 +510,30 @@ export default function WaveformPanel({
 
   return (
     <div className="waveform-panel">
-      {!audioPath && (
+      {!audioPath && !(peaks && peaks.length > 0) && (
         <div className="waveform-empty-overlay">
           <p>받아쓰기 후 파형이 표시됩니다</p>
         </div>
       )}
-      {audioPath && !isReady && (
+      {(audioPath || (peaks && peaks.length > 0)) && !isReady && (
         <div className="waveform-loading">
           <p>파형 로딩 중...</p>
         </div>
       )}
-      {audioPath && isReady && (isRegionsLoading || isUpload) && (
-        <div className="waveform-loading">
-          <p>받아쓰는 중...</p>
-        </div>
-      )}
+      {(audioPath || (peaks && peaks.length > 0)) &&
+        isReady &&
+        (isRegionsLoading || isUpload) && (
+          <div className="waveform-loading">
+            <p>받아쓰는 중...</p>
+          </div>
+        )}
       <div
         ref={containerRef}
         className="waveform-container"
-        style={{ opacity: !audioPath ? 0 : isReady ? 1 : 0.3 }}
+        style={{
+          opacity:
+            !audioPath && !(peaks && peaks.length > 0) ? 0 : isReady ? 1 : 0.3,
+        }}
       />
     </div>
   )

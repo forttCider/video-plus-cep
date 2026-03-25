@@ -201,9 +201,7 @@ function ensureDir(dirPath) {
  */
 export async function renderAudio() {
   // ExtendScript에서 Folder.temp를 사용해 직접 경로 결정 (Windows 8.3 경로 문제 회피)
-  console.log("[renderAudio] ExtendScript auto path mode")
   const result = evalJSON(`renderAudio("auto")`)
-  console.log("[renderAudio] ExtendScript result:", JSON.stringify(result))
   return result
 }
 
@@ -403,10 +401,10 @@ export async function saveWordsData(backupId, sentences) {
  * 삭제된 단어 ID 불러오기 (XMP 메타데이터 - 백업 시퀀스에서)
  * @param {string} backupId - 백업 UUID
  */
-export async function loadWordsData(backupId) {
+export async function loadWordsData(backupId, seqId) {
   try {
     // 백업 시퀀스의 sequenceId 찾기
-    const backupSeqResult = await evalJSON(`getBackupSequenceId("${backupId}")`)
+    const backupSeqResult = await evalJSON(`getBackupSequenceId("${backupId}"${seqId ? ', "' + seqId + '"' : ""})`)
     if (!backupSeqResult?.success) {
       console.error(
         "[loadWordsData] 백업 시퀀스 찾기 실패:",
@@ -727,4 +725,28 @@ export async function isPlaying() {
  */
 export async function setAllTracksLocked(lock) {
   return evalJSON(`setAllTracksLocked(${lock})`)
+}
+
+// ========================================
+// 프로젝트 식별자
+// ========================================
+
+/**
+ * 프로젝트 고유 documentID 반환 (UUID, 영구 지속)
+ */
+export async function getProjectDocumentID() {
+  return evalScript("getProjectDocumentID()")
+}
+
+/**
+ * 현재 시퀀스를 clone하고 원본을 아카이브로 이동
+ * @returns {{ success: boolean, oldSequenceId?: string, newSequenceId?: string, error?: string }}
+ */
+export async function cloneAndArchiveSequence() {
+  const result = await evalScript("cloneAndArchiveSequence()")
+  try {
+    return JSON.parse(result)
+  } catch {
+    return { success: false, error: result }
+  }
 }

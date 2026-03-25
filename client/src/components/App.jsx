@@ -43,8 +43,12 @@ import {
   setAllTracksLocked,
   getExtensionVersion,
   getSequenceFramerate,
+  getProjectDocumentID,
+  cloneAndArchiveSequence,
 } from "../js/cep-bridge"
 import useAudioUpload from "../hooks/useAudioUpload"
+import useStatePersistence from "../hooks/useStatePersistence"
+import { prepareStateForSave } from "../js/stateSerializer"
 import initWords, {
   TICKS_PER_SECOND,
   secondsToTicksAligned,
@@ -99,6 +103,11 @@ export default function App() {
   const [isPlayingState, setIsPlayingState] = useState(false) // 재생 상태
   const [currentWordSentenceIdx, setCurrentWordSentenceIdx] = useState(null)
   const [logs, setLogs] = useState([])
+  const [hasSavedState, setHasSavedState] = useState(false) // 저장 기록 존재 여부
+  const [isInitializing, setIsInitializing] = useState(true) // 초기화 로딩 상태
+  const [isRestoring, setIsRestoring] = useState(false) // 불러오기 로딩 상태
+  const [peaks, setPeaks] = useState(null) // 파형 peaks 데이터
+  const [peaksDuration, setPeaksDuration] = useState(null) // peaks 오디오 duration
   const logPanelRef = useRef(null)
   const batchAbortRef = useRef(null)
   const wordRefs = useRef({})
@@ -135,6 +144,17 @@ export default function App() {
     document.body.removeChild(textarea)
     addLog("info", "로그가 클립보드에 복사되었습니다")
   }, [logs, addLog])
+
+  // 상태 저장/복원 훅
+  const { saveState, loadState, checkSavedState, isSaving } =
+    useStatePersistence({
+      sequenceInfo,
+      sentences,
+      silenceSeconds,
+      selectedWordIds,
+      timebaseRef,
+      addLog,
+    })
 
   // 슬라이더 threshold (ms)
   const silenceThresholdMs = React.useMemo(
@@ -590,6 +610,11 @@ export default function App() {
       setIsProcessing(false)
       setBatchProgress(null)
       setShowProcessingModal(false)
+      // 시퀀스 적용 후 상태 저장 (적용 완료된 sentences + 빈 selectedWordIds)
+      saveState({
+        sentences: sentencesRef.current,
+        selectedWordIds: new Set(),
+      })
     }
   }
 
@@ -640,7 +665,7 @@ export default function App() {
       await setAllTracksLocked(true)
       setStatus(`복원 완료: ${result.restoredName}`)
       loadSequenceInfo()
-      const wordsResult = await loadWordsData(backupId)
+      const wordsResult = await loadWordsData(backupId, result.newSequenceId)
       if (wordsResult?.success) {
         const deletedWordSet = new Set(wordsResult.deletedWords || [])
         const deletedSentenceSet = new Set(wordsResult.deletedSentences || [])
@@ -654,6 +679,29 @@ export default function App() {
         }))
         sentencesRef.current = updatedSentences
         setSentences(updatedSentences)
+      }
+      // 백그라운드: 복원 매핑 API 호출
+      if (result.oldSequenceId && result.newSequenceId) {
+        const documentID = await getProjectDocumentID()
+        const cutPoints = prepareStateForSave(
+          sentencesRef.current,
+          silenceSeconds,
+          selectedWordIds,
+          timebaseRef.current,
+        )
+        fetch(`${API_URL}/transcribe/cut-points/copy`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: documentID,
+            sequence_id: result.newSequenceId,
+            prev_sequence_id: result.oldSequenceId,
+            cut_points: cutPoints,
+          }),
+        })
+          .then((res) => res.json())
+          .then((data) => console.log("[복원 매핑] 응답:", data))
+          .catch((e) => console.warn("[복원 매핑] 실패:", e.message))
       }
     } else setStatus(`복원 실패: ${result?.error || "알 수 없는 오류"}`)
   }
@@ -834,6 +882,11 @@ export default function App() {
       await setAllTracksLocked(true)
       setSentences(gapSentences)
       setStatus(`받아쓰기 완료: ${gapSentences.length}개 문장`)
+      setHasSavedState(false)
+      // 받아쓰기 완료 후 상태 저장 (setState 비동기이므로 overrides로 직접 전달)
+      sentencesRef.current = gapSentences
+      const currentSeqInfo = await getActiveSequenceInfo()
+      saveState({ sentences: gapSentences, sequenceId: currentSeqInfo?.id })
     } catch (e) {
       setStatus("결과 가져오기 실패: " + e.message)
     }
@@ -864,12 +917,27 @@ export default function App() {
       setStatus("취소됨")
       resetAllState()
     },
-    onStart: () => {
-      // 다시 받아쓰기 시 기존 데이터 초기화
+    onStart: async () => {
+      // 시퀀스 백업 + clone (새 sequenceID 부여)
+      const cloneResult = await cloneAndArchiveSequence()
+      if (cloneResult.success) {
+        const newInfo = await getActiveSequenceInfo()
+        if (newInfo?.name) {
+          setSequenceInfo(newInfo)
+          addLog("info", `새 시퀀스 생성: ${newInfo.id}`)
+        }
+      } else {
+        addLog("warn", `시퀀스 복제 실패: ${cloneResult.error}`)
+      }
+      // 기존 데이터 초기화
+      setHasSavedState(false)
       setSentences([])
       setCurrentWordId(null)
       setSelectedWordIds(new Set())
       setFocusedWord(null)
+      setPeaks(null)
+      setPeaksDuration(null)
+      setAudioPath(null)
       sentencesRef.current = []
       timelineIndexRef.current = null
     },
@@ -883,9 +951,24 @@ export default function App() {
 
   useEffect(() => {
     checkConnection()
-    const removeOpened = onSequenceOpened((name) => {
+    let lastCheckedSeqId = null
+    const removeOpened = onSequenceOpened(async (name) => {
       setSequenceInfo({ name })
       setStatus("연결됨")
+      // 저장 기록 확인 (같은 시퀀스 중복 확인 방지)
+      try {
+        const info = await getActiveSequenceInfo()
+        if (info?.id) {
+          setSequenceInfo(info)
+          if (info.id !== lastCheckedSeqId) {
+            lastCheckedSeqId = info.id
+            const exists = await checkSavedState(info.id)
+            setHasSavedState(exists)
+          }
+        }
+      } catch (e) {
+        // 무시
+      }
     })
     const removeClosed = onSequenceClosed(() => {
       setSequenceInfo(null)
@@ -914,9 +997,13 @@ export default function App() {
         registerKeyEvents()
         registerSequenceChangeEvent()
         loadSequenceInfo()
-      } else setError("연결 실패: " + result)
+      } else {
+        setError("연결 실패: " + result)
+        setIsInitializing(false)
+      }
     } catch (e) {
       setError("연결 오류: " + e.message)
+      setIsInitializing(false)
     }
   }
 
@@ -932,6 +1019,16 @@ export default function App() {
       if (info?.name) {
         setSequenceInfo(info)
         setStatus("연결됨")
+        // 프로젝트/시퀀스 ID 로그
+        const docId = await getProjectDocumentID()
+        addLog("info", `프로젝트 ID: ${docId}`)
+        addLog("info", `시퀀스 ID: ${info.id}`)
+        addLog("info", `시퀀스 이름: ${info.name}`)
+        if (info.id) {
+          // 초기 로드 시에도 저장 기록 확인
+          const exists = await checkSavedState(info.id)
+          setHasSavedState(exists)
+        }
       } else {
         setSequenceInfo(null)
         setStatus("시퀀스를 열어주세요")
@@ -941,6 +1038,48 @@ export default function App() {
       setStatus("시퀀스를 열어주세요")
     } finally {
       setIsRefreshing(false)
+      setIsInitializing(false)
+    }
+  }
+
+  // 저장된 상태 불러오기 핸들러
+  const handleLoadSavedState = async () => {
+    try {
+      setIsRestoring(true)
+      setStatus("이전 편집 상태 불러오는 중...")
+      const savedState = await loadState()
+      if (savedState && savedState.sentences?.length > 0) {
+        const framerateInfo = await getSequenceFramerate()
+        if (framerateInfo.timebase) {
+          timebaseRef.current = BigInt(framerateInfo.timebase)
+        }
+        const { restoreWords } = await import("../js/initWords")
+        const gapSentences = restoreWords(savedState.sentences)
+        setSentences(gapSentences)
+        sentencesRef.current = gapSentences
+        setSilenceSeconds(savedState.silenceSeconds || "1")
+        setAudioPath(null) // peaks만으로 파형 표시
+        // peaks 로드 (API waveform 데이터)
+        if (savedState.waveform) {
+          const waveformData = savedState.waveform
+          setPeaks(waveformData.data || waveformData)
+          setPeaksDuration(waveformData.duration || null)
+          addLog("info", "peaks 로드 완료")
+        }
+        setSelectedWordIds(savedState.selectedWordIds || new Set())
+        if (savedState.timebase) timebaseRef.current = savedState.timebase
+        await setAllTracksLocked(true)
+        setStatus(`복원 완료: ${gapSentences.length}개 문장`)
+        addLog("info", "이전 편집 상태 복원됨")
+      } else {
+        setStatus("복원할 데이터가 없습니다")
+      }
+    } catch (e) {
+      setStatus("복원 실패: " + e.message)
+      addLog("warn", "상태 복원 실패: " + e.message)
+    } finally {
+      setIsRestoring(false)
+      setHasSavedState(false)
     }
   }
 
@@ -970,6 +1109,14 @@ export default function App() {
       ref={containerRef}
       tabIndex={0}
     >
+      {/* 초기화 로딩 오버레이 */}
+      {isInitializing && (
+        <div className="fixed inset-0 bg-background z-50 flex flex-col items-center justify-center">
+          <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground mb-3" />
+          <p className="text-sm text-muted-foreground">{status}</p>
+        </div>
+      )}
+
       {/* 헤더 */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
@@ -1241,6 +1388,35 @@ export default function App() {
         </Button>
       </div>
 
+      {/* 저장 기록 불러오기 안내 */}
+      {hasSavedState && !isUpload && (
+        <Card className="mb-3 border-blue-500 bg-blue-950/30">
+          <CardContent className="py-4 px-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <History className="w-4 h-4 text-blue-400" />
+              <span className="text-sm font-medium text-blue-300">
+                이미 받아쓴 기록이 있습니다
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="default"
+              className="bg-blue-600 hover:bg-blue-700"
+              onClick={handleLoadSavedState}
+              disabled={isRestoring}
+            >
+              {isRestoring ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                "불러오기"
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* [테스트] Peaks 생성/로드 */}
+
       {/* 문장 목록 */}
       <Card className="flex-1 overflow-hidden">
         <CardContent className="p-3 overflow-y-auto h-full">
@@ -1429,7 +1605,10 @@ export default function App() {
 
       {/* 하단 파형 패널 */}
       <WaveformPanel
+        key={`${audioPath || "no-audio"}-${peaks ? peaks.length : 0}`}
         audioPath={audioPath}
+        peaks={peaks}
+        peaksDuration={peaksDuration}
         sentences={sentences}
         currentWordId={currentWordId}
         currentTime={getOriginalTimeFromTimeline(currentTime)}

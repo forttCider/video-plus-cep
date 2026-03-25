@@ -4,7 +4,12 @@
  */
 import { useEffect, useState, useRef } from "react"
 import { flushSync } from "react-dom"
-import { renderAudioAndRead, cleanupAudioFile } from "../js/cep-bridge"
+import {
+  renderAudioAndRead,
+  cleanupAudioFile,
+  getProjectDocumentID,
+  getActiveSequenceInfo,
+} from "../js/cep-bridge"
 
 const API_URL =
   process.env.REACT_APP_VIDEO_API_URL || "https://vapi.cidermics.com"
@@ -53,8 +58,8 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
       })
     })
 
-    // 🔥 onStart 콜백 호출 (sentences 초기화 등)
-    onStart && onStart()
+    // 🔥 onStart 콜백 호출 (시퀀스 백업 + clone + 초기화)
+    onStart && await onStart()
     addLog && addLog("info", "오디오 렌더링 시작...")
 
     try {
@@ -90,6 +95,10 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
   const publishQueue = async (arrayBuffer) => {
     addLog && addLog("info", "받아쓰기 요청 중...")
     try {
+      // 프로젝트/시퀀스 ID 가져오기 (청크 업로드 시 전달용)
+      const documentID = await getProjectDocumentID()
+      const seqInfo = await getActiveSequenceInfo()
+
       const response = await fetch(`${API_URL}/transcribe/queue`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -118,7 +127,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
       )
 
       // 청크 업로드 시작
-      uploadChunks(resData.total_chunks, arrayBuffer, resData.task_id)
+      uploadChunks(resData.total_chunks, arrayBuffer, resData.task_id, documentID, seqInfo?.id)
 
       // 상태 폴링 시작
       startPolling(resData.task_id)
@@ -135,7 +144,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
   }
 
   // 청크 업로드
-  const uploadChunks = async (totalChunks, arrayBuffer, taskId) => {
+  const uploadChunks = async (totalChunks, arrayBuffer, taskId, projectId, sequenceId) => {
     for (let i = 0; i < totalChunks; i++) {
       if (isCanceledRef.current || isErrorRef.current) break
 
@@ -144,7 +153,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
       const chunkBuffer = arrayBuffer.slice(start, end)
       const chunkBlob = new Blob([chunkBuffer], { type: "audio/wav" })
 
-      const success = await uploadSingleChunk(i, chunkBlob, taskId)
+      const success = await uploadSingleChunk(i, chunkBlob, taskId, projectId, sequenceId)
       if (!success) {
         clearInterval(intervalRef.current)
         break
@@ -153,7 +162,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
   }
 
   // 단일 청크 업로드
-  const uploadSingleChunk = async (chunkIndex, chunk, taskId) => {
+  const uploadSingleChunk = async (chunkIndex, chunk, taskId, projectId, sequenceId) => {
     if (isCanceledRef.current || isErrorRef.current) return false
 
     try {
@@ -161,6 +170,8 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
       formData.append("task_id", taskId)
       formData.append("chunk_index", String(chunkIndex))
       formData.append("chunk", chunk, `chunk_${chunkIndex}.bin`)
+      if (projectId) formData.append("project_id", projectId)
+      if (sequenceId) formData.append("sequence_id", sequenceId)
 
       const response = await fetch(`${API_URL}/transcribe`, {
         method: "POST",

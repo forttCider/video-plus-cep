@@ -77,6 +77,9 @@ export function buildTimelineIndex(sentences) {
     });
   }
 
+  // 디버그: 오프셋 계산 결과
+  console.log("[buildTimelineIndex] 삭제 구간:", deletedIntervals.length, "총 오프셋(초):", Number(accumulatedOffsetTick) / TICKS_PER_SECOND)
+
   // 캐시 업데이트
   deletedIntervalsCache = deletedIntervals;
   deletedIntervalsCacheKey = sentences.length;
@@ -206,19 +209,13 @@ export function getOriginalTimeFromTimeline(timelineSec) {
   let totalDeletedTick = 0n;
 
   for (const interval of deletedIntervalsCache) {
-    // 타임라인 tick + 지금까지 삭제된 tick = 원본 tick 추정
     const estimatedOriginalTick = timelineTick + totalDeletedTick;
-
-    // 이 삭제 구간보다 앞에 있으면 중단
     if (estimatedOriginalTick < interval.startTick) {
       break;
     }
-
-    // 이 삭제 구간을 지났으면 duration 누적
     totalDeletedTick += interval.durationTick;
   }
 
-  // tick → 초 변환
   return Number(timelineTick + totalDeletedTick) / TICKS_PER_SECOND;
 }
 

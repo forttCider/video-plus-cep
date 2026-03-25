@@ -30,6 +30,40 @@ export function secondsToTicksAligned(seconds, ticksPerFrame) {
  * @param {Array} sentences - 문장 배열
  * @returns {Promise<Array>} - gap 정보가 추가된 문장 배열
  */
+/**
+ * restoreWords - 저장된 상태 복원용 경량 함수
+ * start_at, end_at, firstGap 등 원본 값은 유지하고
+ * BigInt tick 필드만 재생성
+ * @param {Array} sentences - 저장에서 복원된 문장 배열
+ * @param {BigInt} ticksPerFrame - seq.timebase 값
+ * @returns {Array} - BigInt tick 필드가 추가된 문장 배열
+ */
+export function restoreWords(sentences) {
+  return sentences.map((sentence) => ({
+    ...sentence,
+    words: sentence.words?.map((word) => {
+      const restored = {
+        ...word,
+        start_at_sec: word.start_at / 1000,
+        end_at_sec: word.end_at / 1000,
+      }
+      // 저장된 String 값을 BigInt로 복원
+      const bigIntFields = [
+        "start_at_tick", "end_at_tick",
+        "firstGapTick", "secondGapTick",
+        "firstClipOutPointTick", "secondClipInPointTick",
+        "gapAfterTick",
+      ]
+      for (const field of bigIntFields) {
+        if (word[field] != null) {
+          restored[field] = BigInt(word[field])
+        }
+      }
+      return restored
+    }),
+  }))
+}
+
 export default async function initWords(sentences) {
   try {
     // 프레임레이트 가져오기

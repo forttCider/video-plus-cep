@@ -1078,29 +1078,54 @@ function getSequenceFramerate() {
     }
 }
 
+// 헬퍼: 백업 bin 내 시퀀스ID 폴더 찾기 (없으면 null)
+function findSequenceBin(backupBin, sequenceId) {
+    for (var i = 0; i < backupBin.children.numItems; i++) {
+        var child = backupBin.children[i];
+        if (child.name === sequenceId && child.type === 2) {
+            return child;
+        }
+    }
+    return null;
+}
+
+// 헬퍼: backupBin 찾기 (없으면 null)
+function findBackupBin() {
+    var rootItem = app.project.rootItem;
+    for (var i = 0; i < rootItem.children.numItems; i++) {
+        var child = rootItem.children[i];
+        if (child.name === "videoPlus Backups" && child.type === 2) {
+            return child;
+        }
+    }
+    return null;
+}
+
+// 헬퍼: backupBin 찾기 또는 생성
+function findOrCreateBackupBin() {
+    var bin = findBackupBin();
+    if (!bin) {
+        bin = app.project.rootItem.createBin("videoPlus Backups");
+    }
+    return bin;
+}
+
 function getBackupList() {
     try {
-        var rootItem = app.project.rootItem;
-        var backupBin = null;
-        var binName = "videoPlus Backups";
-        
-        // 백업 bin 찾기
-        for (var i = 0; i < rootItem.children.numItems; i++) {
-            var child = rootItem.children[i];
-            if (child.name === binName && child.type === 2) {
-                backupBin = child;
-                break;
-            }
-        }
-        
-        if (!backupBin) {
-            return '{"success":true,"backups":[]}';
-        }
-        
+        var seq = app.project.activeSequence;
+        if (!seq) return '{"success":true,"backups":[]}';
+
+        var backupBin = findBackupBin();
+        if (!backupBin) return '{"success":true,"backups":[]}';
+
+        // 현재 시퀀스ID 폴더 찾기
+        var seqBin = findSequenceBin(backupBin, seq.sequenceID);
+        if (!seqBin) return '{"success":true,"backups":[]}';
+
         var backups = [];
         // UUID 폴더들 순회
-        for (var j = 0; j < backupBin.children.numItems; j++) {
-            var folder = backupBin.children[j];
+        for (var j = 0; j < seqBin.children.numItems; j++) {
+            var folder = seqBin.children[j];
             if (folder.type === 2) { // bin (폴더)
                 var backupId = folder.name;
                 // 폴더 안의 시퀀스 찾기
@@ -1108,12 +1133,12 @@ function getBackupList() {
                     var item = folder.children[k];
                     if (item.type === 1) { // sequence
                         backups.push('{"backupId":"' + backupId + '","name":"' + item.name.replace(/"/g, '\\"') + '","nodeId":"' + item.nodeId + '"}');
-                        break; // 폴더당 하나의 시퀀스만
+                        break;
                     }
                 }
             }
         }
-        
+
         return '{"success":true,"backups":[' + backups.join(',') + ']}';
     } catch (e) {
         return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
@@ -1122,70 +1147,62 @@ function getBackupList() {
 
 function openBackupSequence(backupId) {
     try {
-        var rootItem = app.project.rootItem;
-        var binName = "videoPlus Backups";
-        var backupBin = null;
-        
-        for (var i = 0; i < rootItem.children.numItems; i++) {
-            var child = rootItem.children[i];
-            if (child.name === binName && child.type === 2) {
-                backupBin = child;
-                break;
-            }
-        }
-        
+        var seq = app.project.activeSequence;
+        if (!seq) return '{"success":false,"error":"활성 시퀀스 없음"}';
+
+        var backupBin = findBackupBin();
         if (!backupBin) return '{"success":false,"error":"백업 폴더 없음"}';
-        
+
+        var seqBin = findSequenceBin(backupBin, seq.sequenceID);
+        if (!seqBin) return '{"success":false,"error":"시퀀스 백업 폴더 없음"}';
+
         // UUID 폴더 찾기
-        for (var j = 0; j < backupBin.children.numItems; j++) {
-            var folder = backupBin.children[j];
+        for (var j = 0; j < seqBin.children.numItems; j++) {
+            var folder = seqBin.children[j];
             if (folder.name === backupId && folder.type === 2) {
-                // 폴더 안의 시퀀스 찾아서 열기
                 for (var k = 0; k < folder.children.numItems; k++) {
                     var item = folder.children[k];
-                    if (item.type === 1) { // sequence
+                    if (item.type === 1) {
                         app.project.openSequence(item.nodeId);
                         return '{"success":true,"name":"' + item.name + '"}';
                     }
                 }
             }
         }
-        
+
         return '{"success":false,"error":"백업을 찾을 수 없음"}';
     } catch (e) {
         return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
     }
 }
 
-function getBackupSequenceId(backupId) {
+function getBackupSequenceId(backupId, sequenceId) {
     try {
-        var rootItem = app.project.rootItem;
-        var binName = "videoPlus Backups";
-        var backupBin = null;
-        
-        for (var i = 0; i < rootItem.children.numItems; i++) {
-            var child = rootItem.children[i];
-            if (child.name === binName && child.type === 2) {
-                backupBin = child;
-                break;
-            }
-        }
-        
+        var backupBin = findBackupBin();
         if (!backupBin) return '{"success":false,"error":"백업 폴더 없음"}';
-        
+
+        // sequenceId가 주어지면 해당 폴더에서, 아니면 현재 시퀀스에서
+        var seqId = sequenceId;
+        if (!seqId) {
+            var seq = app.project.activeSequence;
+            if (!seq) return '{"success":false,"error":"활성 시퀀스 없음"}';
+            seqId = seq.sequenceID;
+        }
+
+        var seqBin = findSequenceBin(backupBin, seqId);
+        if (!seqBin) return '{"success":false,"error":"시퀀스 백업 폴더 없음"}';
+
         // UUID 폴더 찾기
-        for (var j = 0; j < backupBin.children.numItems; j++) {
-            var folder = backupBin.children[j];
+        for (var j = 0; j < seqBin.children.numItems; j++) {
+            var folder = seqBin.children[j];
             if (folder.name === backupId && folder.type === 2) {
-                // 폴더 안의 시퀀스 찾기
                 for (var k = 0; k < folder.children.numItems; k++) {
                     var item = folder.children[k];
-                    if (item.type === 1) { // sequence
-                        // 시퀀스 객체에서 sequenceID 찾기
+                    if (item.type === 1) {
                         for (var s = 0; s < app.project.sequences.numSequences; s++) {
-                            var seq = app.project.sequences[s];
-                            if (seq.projectItem && seq.projectItem.nodeId === item.nodeId) {
-                                return '{"success":true,"sequenceId":"' + seq.sequenceID + '"}';
+                            var sq = app.project.sequences[s];
+                            if (sq.projectItem && sq.projectItem.nodeId === item.nodeId) {
+                                return '{"success":true,"sequenceId":"' + sq.sequenceID + '"}';
                             }
                         }
                         return '{"success":false,"error":"시퀀스 ID를 찾을 수 없음"}';
@@ -1193,7 +1210,7 @@ function getBackupSequenceId(backupId) {
                 }
             }
         }
-        
+
         return '{"success":false,"error":"백업을 찾을 수 없음"}';
     } catch (e) {
         return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
@@ -1204,42 +1221,34 @@ function restoreFromBackup(backupId) {
     try {
         var currentSeq = app.project.activeSequence;
         if (!currentSeq) return '{"success":false,"error":"활성 시퀀스 없음"}';
-        
+
         var currentSeqName = currentSeq.name;
         var currentSeqId = currentSeq.sequenceID;
         var currentSeqParent = currentSeq.projectItem ? currentSeq.projectItem.parent : null;
-        
+
         var rootItem = app.project.rootItem;
-        var binName = "videoPlus Backups";
-        var backupBin = null;
-        
-        // 백업 bin 찾기
-        for (var i = 0; i < rootItem.children.numItems; i++) {
-            var child = rootItem.children[i];
-            if (child.name === binName && child.type === 2) {
-                backupBin = child;
-                break;
-            }
-        }
-        
+        var backupBin = findBackupBin();
         if (!backupBin) return '{"success":false,"error":"백업 폴더 없음"}';
-        
+
+        // 시퀀스ID 폴더 찾기
+        var seqBin = findSequenceBin(backupBin, currentSeqId);
+        if (!seqBin) return '{"success":false,"error":"시퀀스 백업 폴더 없음"}';
+
         // UUID 폴더에서 백업 시퀀스 찾기
         var backupFolder = null;
         var backupSeqItem = null;
         var backupSeq = null;
-        
-        for (var j = 0; j < backupBin.children.numItems; j++) {
-            var folder = backupBin.children[j];
+
+        for (var j = 0; j < seqBin.children.numItems; j++) {
+            var folder = seqBin.children[j];
             if (folder.name === backupId && folder.type === 2) {
                 backupFolder = folder;
                 for (var k = 0; k < folder.children.numItems; k++) {
                     var item = folder.children[k];
                     if (item.type === 1) {
                         backupSeqItem = item;
-                        // 시퀀스 객체 찾기
                         for (var s = 0; s < app.project.sequences.numSequences; s++) {
-                            if (app.project.sequences[s].projectItem && 
+                            if (app.project.sequences[s].projectItem &&
                                 app.project.sequences[s].projectItem.nodeId === item.nodeId) {
                                 backupSeq = app.project.sequences[s];
                                 break;
@@ -1351,7 +1360,96 @@ function restoreFromBackup(backupId) {
             }
         }
         
-        return '{"success":true,"restoredName":"' + currentSeqName + '","archivedName":"' + currentSeqName + '_archived_' + timeStr + '"}';
+        var newSeqId = restoredSeq ? restoredSeq.sequenceID : "";
+
+        // 백업 폴더 이름을 새 sequenceID로 변경 (히스토리 유지)
+        var backupSeqBin = findSequenceBin(findBackupBin(), currentSeqId);
+        if (newSeqId && backupSeqBin) {
+            backupSeqBin.name = newSeqId;
+        }
+
+        return '{"success":true,"oldSequenceId":"' + currentSeqId + '","newSequenceId":"' + newSeqId + '","restoredName":"' + currentSeqName + '","archivedName":"' + currentSeqName + '_archived_' + timeStr + '"}';
+    } catch (e) {
+        return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
+    }
+}
+
+function cloneAndArchiveSequence() {
+    try {
+        var currentSeq = app.project.activeSequence;
+        if (!currentSeq) return '{"success":false,"error":"활성 시퀀스 없음"}';
+
+        var originalName = currentSeq.name;
+        var originalId = currentSeq.sequenceID;
+        var rootItem = app.project.rootItem;
+
+        // 1. clone
+        var cloneCountBefore = rootItem.children.numItems;
+        var cloneResult = currentSeq.clone();
+        if (!cloneResult) return '{"success":false,"error":"복제 실패"}';
+
+        // 2. clone된 시퀀스 찾기
+        var clonedItem = null;
+        for (var i = 0; i < rootItem.children.numItems; i++) {
+            var child = rootItem.children[i];
+            if (child.name.indexOf(originalName) === 0 && child.name.indexOf("Copy") !== -1) {
+                clonedItem = child;
+                break;
+            }
+        }
+        if (!clonedItem && rootItem.children.numItems > cloneCountBefore) {
+            clonedItem = rootItem.children[rootItem.children.numItems - 1];
+        }
+        if (!clonedItem) return '{"success":false,"error":"복제된 시퀀스를 찾을 수 없음"}';
+
+        // 3. 원본을 Backups/원본 폴더로 이동
+        var backupBin = findOrCreateBackupBin();
+        var originalBin = null;
+        for (var ob = 0; ob < backupBin.children.numItems; ob++) {
+            var c = backupBin.children[ob];
+            if (c.name === "original" && c.type === 2) {
+                originalBin = c;
+                break;
+            }
+        }
+        if (!originalBin) {
+            originalBin = backupBin.createBin("original");
+        }
+
+        var timestamp = new Date();
+        var timeStr = timestamp.getFullYear() +
+            ("0" + (timestamp.getMonth() + 1)).slice(-2) +
+            ("0" + timestamp.getDate()).slice(-2) + "_" +
+            ("0" + timestamp.getHours()).slice(-2) +
+            ("0" + timestamp.getMinutes()).slice(-2) +
+            ("0" + timestamp.getSeconds()).slice(-2);
+
+        if (currentSeq.projectItem) {
+            currentSeq.projectItem.name = originalName + "_" + timeStr;
+            currentSeq.projectItem.moveBin(originalBin);
+        }
+        if (currentSeq && currentSeq.close) {
+            try { currentSeq.close(); } catch (e) {}
+        }
+
+        // 4. clone 이름을 원본 이름으로 변경
+        clonedItem.name = originalName;
+
+        // 5. clone을 활성 시퀀스로 설정
+        var clonedSeq = null;
+        for (var p = 0; p < app.project.sequences.numSequences; p++) {
+            var seq = app.project.sequences[p];
+            if (seq.projectItem && seq.projectItem.nodeId === clonedItem.nodeId) {
+                clonedSeq = seq;
+                break;
+            }
+        }
+        if (clonedSeq) {
+            app.project.activeSequence = clonedSeq;
+        }
+
+        var newSeqId = clonedSeq ? clonedSeq.sequenceID : "";
+        return '{"success":true,"oldSequenceId":"' + originalId + '","newSequenceId":"' + newSeqId + '"}';
     } catch (e) {
         return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
     }
@@ -1375,30 +1473,21 @@ function backupSequence(backupName) {
     try {
         var seq = app.project.activeSequence;
         if (!seq) return '{"success":false,"error":"시퀀스 없음"}';
-        
+
         var rootItem = app.project.rootItem;
-        var backupBin = null;
-        var binName = "videoPlus Backups";
-        
-        // 백업 bin 찾기 또는 생성
-        for (var i = 0; i < rootItem.children.numItems; i++) {
-            var child = rootItem.children[i];
-            if (child.name === binName && child.type === 2) {
-                backupBin = child;
-                break;
-            }
-        }
-        
-        if (!backupBin) {
-            backupBin = rootItem.createBin(binName);
-        }
-        
+        var backupBin = findOrCreateBackupBin();
         var originalName = seq.name;
-        
+
+        // 시퀀스ID 폴더 찾기 또는 생성
+        var seqBin = findSequenceBin(backupBin, seq.sequenceID);
+        if (!seqBin) {
+            seqBin = backupBin.createBin(seq.sequenceID);
+        }
+
         // UUID 폴더 생성
         var backupId = generateRandomId();
-        var backupFolder = backupBin.createBin(backupId);
-        
+        var backupFolder = seqBin.createBin(backupId);
+
         // 복제 전 rootItem 개수 기록
         var childCountBefore = rootItem.children.numItems;
         
@@ -2785,4 +2874,16 @@ function insertAdjustmentLayers(filePath) {
     } catch (e) {
         return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
     }
+}
+
+// ========================================
+// 프로젝트 식별자
+// ========================================
+
+/**
+ * 프로젝트 고유 documentID 반환 (UUID 형태, read-only, 영구 지속)
+ */
+function getProjectDocumentID() {
+    try { return app.project.documentID; }
+    catch(e) { return ""; }
 }
