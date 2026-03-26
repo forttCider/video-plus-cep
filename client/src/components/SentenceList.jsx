@@ -19,6 +19,9 @@ export default function SentenceList({
   mode = "cut",
   onChangeSpk,
   spkList = [0, 1],
+  editingWord,
+  onStartEditing,
+  onWordTextUpdate,
 }) {
   return (
     <Card className="flex-1 overflow-hidden">
@@ -52,6 +55,9 @@ export default function SentenceList({
               mode={mode}
               onChangeSpk={onChangeSpk}
               spkList={spkList}
+              editingWord={editingWord}
+              onStartEditing={onStartEditing}
+              onWordTextUpdate={onWordTextUpdate}
             />
           ))
         ) : (

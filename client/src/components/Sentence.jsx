@@ -25,6 +25,9 @@ const Sentence = forwardRef(
       mode = "cut",
       onChangeSpk,
       spkList = [0, 1],
+      editingWord = null,
+      onStartEditing,
+      onWordTextUpdate,
     },
     ref
   ) => {
@@ -91,12 +94,15 @@ const Sentence = forwardRef(
           <div className="sentence-words">
             {sentence.words.map((word, wordIdx) => {
               if (isSilenceHidden(word)) return null;
+              if (mode === "subs" && word.isEdit) return null;
               const isSearchMatch = searchResultsSet.has(word.id);
               const isCurrentSearchMatch = currentSearchWordId === word.id;
               const isFocused = focusedWord?.sentenceIdx === sentenceIdx && 
                                focusedWord?.wordIdx === wordIdx;
               const wordId = word.id || word.start_at;
               const isSelected = mode === "cut" && selectedWordIds.has(wordId);
+              const isEditingThis = editingWord?.sentenceIdx === sentenceIdx &&
+                                    editingWord?.wordIdx === wordIdx;
               return (
                 <Word
                   key={word.id}
@@ -106,7 +112,15 @@ const Sentence = forwardRef(
                   isSelected={isSelected}
                   isSearchMatch={isSearchMatch}
                   isCurrentSearchMatch={isCurrentSearchMatch}
-                  onClick={() => onWordClick(word)}
+                  isEditing={isEditingThis}
+                  onClick={(e) => {
+                    if (mode === "subs" && e.detail >= 2 && !word.isDeleted) {
+                      onStartEditing?.(sentenceIdx, wordIdx);
+                      return;
+                    }
+                    onWordClick(word);
+                  }}
+                  onTextUpdate={(newText) => onWordTextUpdate?.(sentenceIdx, wordIdx, newText, word.id)}
                   mode={mode}
                   ref={(el) => (wordRefs.current[word.start_at] = el)}
                 />
@@ -154,6 +168,13 @@ export default React.memo(Sentence, (prevProps, nextProps) => {
 
   // silenceThresholdMs 변경 확인
   if (prevProps.silenceThresholdMs !== nextProps.silenceThresholdMs) return false;
+
+  // editingWord 변경 확인
+  const prevHasEditing = prevProps.editingWord?.sentenceIdx === prevProps.sentenceIdx;
+  const nextHasEditing = nextProps.editingWord?.sentenceIdx === nextProps.sentenceIdx;
+  if (prevHasEditing !== nextHasEditing) return false;
+  if (prevHasEditing && prevProps.editingWord?.wordIdx !== nextProps.editingWord?.wordIdx)
+    return false;
 
   return true;
 });

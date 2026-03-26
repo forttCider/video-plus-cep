@@ -89,6 +89,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("cut") // "cut" | "subs"
   const [originalSpkList, setOriginalSpkList] = useState([]) // 원본 화자 목록
   const [subsMaxWords, setSubsMaxWords] = useState(4) // 자막 최대 단어 수
+  const [editingWord, setEditingWord] = useState(null) // { sentenceIdx, wordIdx }
   const [peaks, setPeaks] = useState(null) // 파형 peaks 데이터
   const [peaksDuration, setPeaksDuration] = useState(null) // peaks 오디오 duration
   const logPanelRef = useRef(null)
@@ -293,6 +294,23 @@ export default function App() {
     saveState,
     formatBackupName,
   })
+
+  const handleStartEditing = useCallback((sentenceIdx, wordIdx) => {
+    setEditingWord({ sentenceIdx, wordIdx })
+  }, [])
+
+  const handleWordTextUpdate = useCallback((sentenceIdx, wordIdx, newText, wordId) => {
+    setEditingWord(null)
+    if (newText === null) return
+    setSentences((prev) =>
+      prev.map((s) => ({
+        ...s,
+        words: s.words.map((w) =>
+          w.id === wordId ? { ...w, text: newText } : w,
+        ),
+      })),
+    )
+  }, [])
 
   const handleChangeSpk = useCallback((sentenceIdx, newSpk) => {
     setSentences((prev) => {
@@ -840,6 +858,9 @@ export default function App() {
             }
             isUpload={isUpload}
             onChangeSpk={handleChangeSpk}
+            editingWord={editingWord}
+            onStartEditing={handleStartEditing}
+            onWordTextUpdate={handleWordTextUpdate}
           />
         </>
       )}
