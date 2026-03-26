@@ -16,6 +16,9 @@ export default function SentenceList({
   onDeleteSentence,
   onSentencePlay,
   isUpload,
+  mode = "cut",
+  onChangeSpk,
+  spkList = [0, 1],
 }) {
   return (
     <Card className="flex-1 overflow-hidden">
@@ -46,6 +49,9 @@ export default function SentenceList({
               currentSearchWordId={currentSearchWordId}
               wordRefs={wordRefs}
               silenceThresholdMs={silenceThresholdMs}
+              mode={mode}
+              onChangeSpk={onChangeSpk}
+              spkList={spkList}
             />
           ))
         ) : (

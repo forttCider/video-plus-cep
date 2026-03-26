@@ -3,7 +3,6 @@ import { RefreshCw } from "lucide-react"
 import { Button } from "./ui/button"
 import { Card, CardContent } from "./ui/card"
 import AppHeader from "./AppHeader"
-import StatusBar from "./StatusBar"
 import UploadProgress from "./UploadProgress"
 import BatchProgress from "./BatchProgress"
 import LogPanel from "./LogPanel"
@@ -14,6 +13,7 @@ import ApplyButton from "./ApplyButton"
 import BackupHistoryDialog from "./BackupHistoryDialog"
 import RestoreConfirmDialog from "./RestoreConfirmDialog"
 import ProcessingModal from "./ProcessingModal"
+import { splitForSubtitles } from "../js/subtitleSplitter"
 import {
   testConnection,
   getActiveSequenceInfo,
@@ -24,7 +24,6 @@ import {
   setPlayerPositionByTicks,
   registerKeyEvents,
   setAllTracksLocked,
-  getExtensionVersion,
   getSequenceFramerate,
   getProjectDocumentID,
   cloneAndArchiveSequence,
@@ -87,6 +86,9 @@ export default function App() {
   const [hasSavedState, setHasSavedState] = useState(false) // 저장 기록 존재 여부
   const [isInitializing, setIsInitializing] = useState(true) // 초기화 로딩 상태
   const [isRestoring, setIsRestoring] = useState(false) // 불러오기 로딩 상태
+  const [activeTab, setActiveTab] = useState("cut") // "cut" | "subs"
+  const [originalSpkList, setOriginalSpkList] = useState([]) // 원본 화자 목록
+  const [subsMaxWords, setSubsMaxWords] = useState(4) // 자막 최대 단어 수
   const [peaks, setPeaks] = useState(null) // 파형 peaks 데이터
   const [peaksDuration, setPeaksDuration] = useState(null) // peaks 오디오 duration
   const logPanelRef = useRef(null)
@@ -292,6 +294,14 @@ export default function App() {
     formatBackupName,
   })
 
+  const handleChangeSpk = useCallback((sentenceIdx, newSpk) => {
+    setSentences((prev) => {
+      const next = [...prev]
+      next[sentenceIdx] = { ...next[sentenceIdx], spk: newSpk }
+      return next
+    })
+  }, [])
+
   const [isRefreshing, setIsRefreshing] = useState(true)
 
   const loadSequenceInfo = async () => {
@@ -447,6 +457,13 @@ export default function App() {
       await setAllTracksLocked(true)
       setSentences(gapSentences)
       setStatus(`받아쓰기 완료: ${gapSentences.length}개 문장`)
+      // 원본 화자 정보 저장
+      gapSentences.forEach((s) => {
+        s.originalSpk = s.spk || 0
+      })
+      setOriginalSpkList(
+        [...new Set(gapSentences.map((s) => s.spk || 0))].sort(),
+      )
       setHasSavedState(false)
       // 받아쓰기 완료 후 상태 저장 (setState 비동기이므로 overrides로 직접 전달)
       sentencesRef.current = gapSentences
@@ -601,6 +618,12 @@ export default function App() {
         await setAllTracksLocked(true)
         setStatus(`복원 완료: ${gapSentences.length}개 문장`)
         addLog("info", "이전 편집 상태 복원됨")
+        gapSentences.forEach((s) => {
+          s.originalSpk = s.spk || 0
+        })
+        setOriginalSpkList(
+          [...new Set(gapSentences.map((s) => s.spk || 0))].sort(),
+        )
       } else {
         setStatus("복원할 데이터가 없습니다")
       }
@@ -648,17 +671,20 @@ export default function App() {
       )}
 
       <AppHeader
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
         onOpenHistory={handleOpenHistory}
         sequenceInfo={sequenceInfo}
         isRefreshing={isRefreshing}
         onRefresh={loadSequenceInfo}
-        extensionVersion={getExtensionVersion()}
+        status={status}
       />
 
-      <StatusBar
-        status={status}
-        isRefreshing={isRefreshing}
-        onRefresh={loadSequenceInfo}
+      <LogPanel
+        logs={logs}
+        onCopy={copyLogs}
+        onClear={clearLogs}
+        logPanelRef={logPanelRef}
       />
 
       <UploadProgress
@@ -669,59 +695,154 @@ export default function App() {
 
       <BatchProgress batchProgress={batchProgress} />
 
-      <LogPanel
-        logs={logs}
-        onCopy={copyLogs}
-        onClear={clearLogs}
-        logPanelRef={logPanelRef}
-      />
+      {/* 공통 영역: 받아쓰기 + 불러오기 */}
+      {sentences.length === 0 && (
+        <>
+          <CutEditControls
+            silenceSeconds={silenceSeconds}
+            onSilenceChange={setSilenceSeconds}
+            onTranscribe={onClickRenderAudio}
+            isUpload={isUpload}
+            isConnected={isConnected}
+            isProcessing={isProcessing}
+            sentences={sentences}
+            allSilenceSelected={allSilenceSelected}
+            allFillerSelected={allFillerSelected}
+            onSelectSilence={handleSelectSilence}
+            onSelectFiller={handleSelectFiller}
+          />
 
-      <CutEditControls
-        silenceSeconds={silenceSeconds}
-        onSilenceChange={setSilenceSeconds}
-        onTranscribe={onClickRenderAudio}
-        isUpload={isUpload}
-        isConnected={isConnected}
-        isProcessing={isProcessing}
-        sentences={sentences}
-        allSilenceSelected={allSilenceSelected}
-        allFillerSelected={allFillerSelected}
-        onSelectSilence={handleSelectSilence}
-        onSelectFiller={handleSelectFiller}
-      />
+          <SavedStateBanner
+            hasSavedState={hasSavedState}
+            isUpload={isUpload}
+            isRestoring={isRestoring}
+            onLoad={handleLoadSavedState}
+          />
+        </>
+      )}
 
-      <SavedStateBanner
-        hasSavedState={hasSavedState}
-        isUpload={isUpload}
-        isRestoring={isRestoring}
-        onLoad={handleLoadSavedState}
-      />
+      {/* 탭 내용: 컷편집 */}
+      {sentences.length > 0 && activeTab === "cut" && (
+        <>
+          <CutEditControls
+            silenceSeconds={silenceSeconds}
+            onSilenceChange={setSilenceSeconds}
+            onTranscribe={onClickRenderAudio}
+            isUpload={isUpload}
+            isConnected={isConnected}
+            isProcessing={isProcessing}
+            sentences={sentences}
+            allSilenceSelected={allSilenceSelected}
+            allFillerSelected={allFillerSelected}
+            onSelectSilence={handleSelectSilence}
+            onSelectFiller={handleSelectFiller}
+          />
 
-      <SentenceList
-        sentences={sentences}
-        focusedWord={focusedWord}
-        currentWordId={currentWordId}
-        currentWordSentenceIdx={currentWordSentenceIdx}
-        selectedWordIds={selectedWordIds}
-        searchResultsSet={searchResultsSet}
-        currentSearchWordId={currentSearchWordId}
-        silenceThresholdMs={silenceThresholdMs}
-        wordRefs={wordRefs}
-        onWordClick={handleWordClick}
-        onDeleteSentence={handleDeleteSentence}
-        onSentencePlay={(sIdx, wIdx) =>
-          setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
-        }
-        isUpload={isUpload}
-      />
+          <SentenceList
+            sentences={sentences}
+            focusedWord={focusedWord}
+            currentWordId={currentWordId}
+            currentWordSentenceIdx={currentWordSentenceIdx}
+            selectedWordIds={selectedWordIds}
+            searchResultsSet={searchResultsSet}
+            currentSearchWordId={currentSearchWordId}
+            silenceThresholdMs={silenceThresholdMs}
+            wordRefs={wordRefs}
+            onWordClick={handleWordClick}
+            onDeleteSentence={handleDeleteSentence}
+            onSentencePlay={(sIdx, wIdx) =>
+              setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
+            }
+            isUpload={isUpload}
+            onChangeSpk={handleChangeSpk}
+            spkList={[...new Set(sentences.map((s) => s.spk || 0))].sort()}
+          />
 
-      <ApplyButton
-        selectedWordIds={selectedWordIds}
-        onApply={handleApplySelected}
-        isProcessing={isProcessing}
-        isConnected={isConnected}
-        isUpload={isUpload}
-      />
+          <ApplyButton
+            selectedWordIds={selectedWordIds}
+            onApply={handleApplySelected}
+            isProcessing={isProcessing}
+            isConnected={isConnected}
+            isUpload={isUpload}
+          />
+        </>
+      )}
+
+      {/* 탭 내용: 자막편집 */}
+      {sentences.length > 0 && activeTab === "subs" && (
+        <>
+          <div className="flex items-center justify-between mb-2 px-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                화자 {originalSpkList.length}명 감지
+              </span>
+              <span className="text-xs text-muted-foreground">|</span>
+              {originalSpkList.map((fromSpk) => (
+                <div key={fromSpk} className="flex items-center gap-1">
+                  <span className="text-xs text-muted-foreground">
+                    화자 {fromSpk + 1} →
+                  </span>
+                  <select
+                    className="spk-select"
+                    value={(() => {
+                      const matched = sentences.find(
+                        (s) => s.originalSpk === fromSpk,
+                      )
+                      return matched ? matched.spk || 0 : fromSpk
+                    })()}
+                    onChange={(e) => {
+                      const toSpk = parseInt(e.target.value, 10)
+                      if (!isNaN(toSpk)) {
+                        setSentences((prev) =>
+                          prev.map((s) =>
+                            s.originalSpk === fromSpk ? { ...s, spk: toSpk } : s,
+                          ),
+                        )
+                      }
+                    }}
+                  >
+                    {originalSpkList.map((spk) => (
+                      <option key={spk} value={spk}>
+                        {spk + 1}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <span className="text-xs text-muted-foreground">단어: {subsMaxWords}</span>
+              <input
+                type="range"
+                min={2}
+                max={8}
+                value={subsMaxWords}
+                onChange={(e) => setSubsMaxWords(parseInt(e.target.value, 10))}
+                className="w-16 h-1 accent-primary"
+              />
+            </div>
+          </div>
+          <SentenceList
+            sentences={splitForSubtitles(sentences, subsMaxWords)}
+            mode="subs"
+            focusedWord={focusedWord}
+            currentWordId={currentWordId}
+            currentWordSentenceIdx={currentWordSentenceIdx}
+            selectedWordIds={selectedWordIds}
+            searchResultsSet={searchResultsSet}
+            currentSearchWordId={currentSearchWordId}
+            silenceThresholdMs={silenceThresholdMs}
+            wordRefs={wordRefs}
+            onWordClick={handleWordClick}
+            onDeleteSentence={handleDeleteSentence}
+            onSentencePlay={(sIdx, wIdx) =>
+              setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
+            }
+            isUpload={isUpload}
+            onChangeSpk={handleChangeSpk}
+          />
+        </>
+      )}
 
       <BackupHistoryDialog
         open={showHistory}
@@ -747,22 +868,24 @@ export default function App() {
         }}
       />
 
-      {/* 하단 파형 패널 */}
-      <WaveformPanel
-        key={`${audioPath || "no-audio"}-${peaks ? peaks.length : 0}`}
-        audioPath={audioPath}
-        peaks={peaks}
-        peaksDuration={peaksDuration}
-        sentences={sentences}
-        currentWordId={currentWordId}
-        currentTime={getOriginalTimeFromTimeline(currentTime)}
-        focusedWord={focusedWord}
-        onWordTimeChange={handleWordTimeChange}
-        onSeek={handleWaveformSeek}
-        isPlaying={isPlayingState}
-        isUpload={isUpload}
-        silenceThresholdMs={silenceThresholdMs}
-      />
+      {/* 하단 파형 패널 (컷편집만) */}
+      {activeTab === "cut" && sentences.length === 0 && (
+        <WaveformPanel
+          key={`${audioPath || "no-audio"}-${peaks ? peaks.length : 0}`}
+          audioPath={audioPath}
+          peaks={peaks}
+          peaksDuration={peaksDuration}
+          sentences={sentences}
+          currentWordId={currentWordId}
+          currentTime={getOriginalTimeFromTimeline(currentTime)}
+          focusedWord={focusedWord}
+          onWordTimeChange={handleWordTimeChange}
+          onSeek={handleWaveformSeek}
+          isPlaying={isPlayingState}
+          isUpload={isUpload}
+          silenceThresholdMs={silenceThresholdMs}
+        />
+      )}
     </div>
   )
 }

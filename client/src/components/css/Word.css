@@ -19,6 +19,11 @@
   text-decoration: line-through;
 }
 
+.word-deleted-subs {
+  color: #e74c3c;
+  text-decoration: line-through;
+}
+
 .word-normal {
   font-size: 16px;
 }

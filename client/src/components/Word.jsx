@@ -18,6 +18,7 @@ const Word = React.memo(
         isSearchMatch,
         isCurrentSearchMatch,
         onClick,
+        mode = "cut",
       },
       ref,
     ) => {
@@ -27,15 +28,15 @@ const Word = React.memo(
         isCurrentWord ? "word-current" : "",
         isFocused ? "word-focused" : "",
         isSelected ? "word-selected" : "",
-        word.isEdit || word.edit_points?.reason ? "word-edit" : "",
-        word.isDeleted ? "word-deleted" : "",
+        mode === "cut" && (word.isEdit || word.edit_points?.reason) ? "word-edit" : "",
+        word.isDeleted ? (mode === "subs" ? "word-deleted-subs" : "word-deleted") : "",
         isSearchMatch ? "word-search-match" : "",
         isCurrentSearchMatch ? "word-search-current" : "",
       ]
         .filter(Boolean)
         .join(" ")
 
-      const reason = word.edit_points?.reason
+      const reason = mode === "cut" ? word.edit_points?.reason : null
 
       const wordContent = (
         <div ref={ref} className={classNames} onClick={onClick}>

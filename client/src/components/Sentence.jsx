@@ -22,6 +22,9 @@ const Sentence = forwardRef(
       currentSearchWordId = null,
       wordRefs = { current: {} },
       silenceThresholdMs = 1000,
+      mode = "cut",
+      onChangeSpk,
+      spkList = [0, 1],
     },
     ref
   ) => {
@@ -55,18 +58,31 @@ const Sentence = forwardRef(
       <div className="sentence" ref={ref}>
         <div className="sentence-options">
           <div className="sentence-edit">
-            <p
-              className={`sentence-cut ${allWordsSelected ? 'selected' : ''}`}
-              onClick={() => onDeleteSentence(sentence)}
-              title={allWordsSelected ? "선택 해제" : "선택 추가"}
-            >
-              {allWordsSelected ? <Undo2 size={14} /> : <Scissors size={14} />}
-            </p>
+            {mode === "cut" && (
+              <p
+                className={`sentence-cut ${allWordsSelected ? 'selected' : ''}`}
+                onClick={() => onDeleteSentence(sentence)}
+                title={allWordsSelected ? "선택 해제" : "선택 추가"}
+              >
+                {allWordsSelected ? <Undo2 size={14} /> : <Scissors size={14} />}
+              </p>
+            )}
             <p className="sentence-play" onClick={onClickPlaySentence}>
               <Play size={14} />
             </p>
           </div>
-          <p className="sentence-spk"><Mic size={12} /> {(sentence.spk || 0) + 1}</p>
+          <div className="sentence-spk">
+            <Mic size={12} />
+            <select
+              className="spk-select"
+              value={sentence.spk || 0}
+              onChange={(e) => onChangeSpk?.(sentenceIdx, parseInt(e.target.value, 10))}
+            >
+              {spkList.map((spk) => (
+                <option key={spk} value={spk}>{spk + 1}</option>
+              ))}
+            </select>
+          </div>
         </div>
         <div className="sentence-info">
           <p>
@@ -80,7 +96,7 @@ const Sentence = forwardRef(
               const isFocused = focusedWord?.sentenceIdx === sentenceIdx && 
                                focusedWord?.wordIdx === wordIdx;
               const wordId = word.id || word.start_at;
-              const isSelected = selectedWordIds.has(wordId);
+              const isSelected = mode === "cut" && selectedWordIds.has(wordId);
               return (
                 <Word
                   key={word.id}
@@ -91,6 +107,7 @@ const Sentence = forwardRef(
                   isSearchMatch={isSearchMatch}
                   isCurrentSearchMatch={isCurrentSearchMatch}
                   onClick={() => onWordClick(word)}
+                  mode={mode}
                   ref={(el) => (wordRefs.current[word.start_at] = el)}
                 />
               );
