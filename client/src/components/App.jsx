@@ -1,28 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback } from "react"
-import {
-  Mic,
-  VolumeX,
-  MessageCircle,
-  Scissors,
-  History,
-  FolderOpen,
-  X,
-  RefreshCw,
-  ClipboardCopy,
-} from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "./ui/button"
-import { Input } from "./ui/input"
-import { Slider } from "./ui/slider"
-import { Badge } from "./ui/badge"
 import { Card, CardContent } from "./ui/card"
-import { Progress } from "./ui/progress"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "./ui/dialog"
+import AppHeader from "./AppHeader"
+import StatusBar from "./StatusBar"
+import UploadProgress from "./UploadProgress"
+import BatchProgress from "./BatchProgress"
+import LogPanel from "./LogPanel"
+import CutEditControls from "./CutEditControls"
+import SavedStateBanner from "./SavedStateBanner"
+import SentenceList from "./SentenceList"
+import ApplyButton from "./ApplyButton"
+import BackupHistoryDialog from "./BackupHistoryDialog"
+import RestoreConfirmDialog from "./RestoreConfirmDialog"
+import ProcessingModal from "./ProcessingModal"
 import {
   testConnection,
   getActiveSequenceInfo,
@@ -31,14 +22,6 @@ import {
   registerSequenceChangeEvent,
   setPlayerPosition,
   setPlayerPositionByTicks,
-  getPlayerPosition,
-  togglePlayback,
-  isPlaying,
-  backupSequence,
-  getBackupList,
-  restoreFromBackup,
-  saveWordsData,
-  loadWordsData,
   registerKeyEvents,
   setAllTracksLocked,
   getExtensionVersion,
@@ -47,13 +30,16 @@ import {
   cloneAndArchiveSequence,
 } from "../js/cep-bridge"
 import useAudioUpload from "../hooks/useAudioUpload"
+import useKeyboardNavigation from "../hooks/useKeyboardNavigation"
+import useWordSelection from "../hooks/useWordSelection"
+import useBatchEdit from "../hooks/useBatchEdit"
+import useBackupRestore from "../hooks/useBackupRestore"
+import usePlaybackTracking from "../hooks/usePlaybackTracking"
 import useStatePersistence from "../hooks/useStatePersistence"
-import { prepareStateForSave } from "../js/stateSerializer"
 import initWords, {
   TICKS_PER_SECOND,
   secondsToTicksAligned,
 } from "../js/initWords"
-import Sentence from "./Sentence"
 import WaveformPanel from "./WaveformPanel"
 import {
   getTimelinePositionTick,
@@ -62,11 +48,6 @@ import {
   getOriginalTimeFromTimeline,
   getTimelineTimeFromOriginal,
 } from "../js/calculateTimeOffset"
-import {
-  batchDeleteWords,
-  applyDeleteResult,
-  FILLER_TYPES,
-} from "../js/batchEditWords"
 
 const API_URL =
   process.env.REACT_APP_VIDEO_API_URL || "https://vapi.cidermics.com"
@@ -190,280 +171,30 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [focusedWord])
 
-  useEffect(() => {
-    if (!isConnected || sentences.length === 0 || isProcessing) return
-    const pollInterval = setInterval(async () => {
-      try {
-        const playingResult = await isPlaying()
-        const nowPlaying = playingResult?.isPlaying || false
-        if (nowPlaying !== isPlayingStateRef.current) {
-          isPlayingStateRef.current = nowPlaying
-          setIsPlayingState(nowPlaying)
-        }
-        if (!nowPlaying) {
-          // 재생 멈춤 - currentWordId는 유지 (노란색 배경 유지)
-          return
-        }
-        const result = await getPlayerPosition()
-        if (result?.success) {
-          if (result.seconds !== currentTimeRef.current) {
-            currentTimeRef.current = result.seconds
-            setCurrentTime(result.seconds)
-          }
-          if (timelineIndexRef.current) {
-            const found = findCurrentWordFromIndex(
-              timelineIndexRef.current,
-              result.seconds,
-            )
-            if (
-              found?.word &&
-              found.word.start_at !== currentWordIdRef.current
-            ) {
-              currentWordIdRef.current = found.word.start_at
-              setCurrentWordId(found.word.start_at)
-              const sIdx =
-                wordSentenceIdxRef.current.get(found.word.start_at) ?? null
-              setCurrentWordSentenceIdx(sIdx)
-            }
-          }
-        }
-      } catch (e) {}
-    }, 100)
-    return () => clearInterval(pollInterval)
-  }, [isConnected, sentences.length, isProcessing])
+  usePlaybackTracking({
+    isConnected,
+    sentencesLength: sentences.length,
+    isProcessing,
+    currentTimeRef,
+    setCurrentTime,
+    currentWordIdRef,
+    setCurrentWordId,
+    setCurrentWordSentenceIdx,
+    wordSentenceIdxRef,
+    isPlayingStateRef,
+    setIsPlayingState,
+    timelineIndexRef,
+    wordRefs,
+  })
 
-  useEffect(() => {
-    if (!currentWordId || !wordRefs.current[currentWordId]) return
-    wordRefs.current[currentWordId].scrollIntoView({
-      behavior: "instant",
-      block: "center",
-    })
-  }, [currentWordId])
-
-  const handleKeyDown = (e) => {
-    if (!sentencesRef.current || sentencesRef.current.length === 0) return
-    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return
-    const sentences = sentencesRef.current
-    const currentSentenceIdx = focusedWord?.sentenceIdx ?? 0
-    const currentWordIdx = focusedWord?.wordIdx ?? 0
-    const key = e.key?.toLowerCase()
-    const keyCode = e.keyCode
-    const isLeft =
-      key === "a" || key === "ㅁ" || keyCode === 37 || key === "arrowleft"
-    const isRight =
-      key === "d" || key === "ㅇ" || keyCode === 39 || key === "arrowright"
-    const isUp =
-      key === "w" || key === "ㅈ" || keyCode === 38 || key === "arrowup"
-    const isDown =
-      key === "s" || key === "ㄴ" || keyCode === 40 || key === "arrowdown"
-    const isK = key === "k" || key === "ㅏ"
-    const isSpace = key === " " || keyCode === 32
-
-    const findNextWord = (sIdx, wIdx) => {
-      let s = sIdx,
-        w = wIdx + 1
-      const maxIterations = sentences.reduce(
-        (sum, s) => sum + (s.words?.length || 0),
-        0,
-      )
-      let iterations = 0
-      while (iterations < maxIterations) {
-        if (w >= (sentences[s]?.words?.length || 0)) {
-          s = (s + 1) % sentences.length
-          w = 0
-        }
-        const word = sentences[s]?.words?.[w]
-        if (word && !word.isDeleted && !isSilenceHidden(word))
-          return { sentenceIdx: s, wordIdx: w, word }
-        w++
-        iterations++
-      }
-      return null
-    }
-
-    const findPrevWord = (sIdx, wIdx) => {
-      let s = sIdx,
-        w = wIdx - 1
-      const maxIterations = sentences.reduce(
-        (sum, s) => sum + (s.words?.length || 0),
-        0,
-      )
-      let iterations = 0
-      while (iterations < maxIterations) {
-        if (w < 0) {
-          s = s > 0 ? s - 1 : sentences.length - 1
-          w = (sentences[s]?.words?.length || 1) - 1
-        }
-        const word = sentences[s]?.words?.[w]
-        if (word && !word.isDeleted && !isSilenceHidden(word))
-          return { sentenceIdx: s, wordIdx: w, word }
-        w--
-        iterations++
-      }
-      return null
-    }
-
-    if (isRight) {
-      e.preventDefault()
-      const next = findNextWord(currentSentenceIdx, currentWordIdx)
-      if (next) {
-        setFocusedWord({ sentenceIdx: next.sentenceIdx, wordIdx: next.wordIdx })
-        wordRefs.current[next.word.start_at]?.scrollIntoView({
-          behavior: "instant",
-          block: "center",
-        })
-      }
-    }
-    if (isLeft) {
-      e.preventDefault()
-      const prev = findPrevWord(currentSentenceIdx, currentWordIdx)
-      if (prev) {
-        setFocusedWord({ sentenceIdx: prev.sentenceIdx, wordIdx: prev.wordIdx })
-        wordRefs.current[prev.word.start_at]?.scrollIntoView({
-          behavior: "instant",
-          block: "center",
-        })
-      }
-    }
-
-    const getWordLines = (sentence) => {
-      const lines = []
-      let currentLine = []
-      let currentY = null
-      sentence.words?.forEach((word, idx) => {
-        if (word.isDeleted || isSilenceHidden(word)) return
-        const el = wordRefs.current[word.start_at]
-        if (!el) return
-        const y = Math.round(el.getBoundingClientRect().top)
-        if (currentY === null || Math.abs(y - currentY) < 10) {
-          currentLine.push({ word, idx, y })
-          currentY = y
-        } else {
-          if (currentLine.length > 0) lines.push(currentLine)
-          currentLine = [{ word, idx, y }]
-          currentY = y
-        }
-      })
-      if (currentLine.length > 0) lines.push(currentLine)
-      return lines
-    }
-
-    const findFirstNonDeletedWord = (sentence) => {
-      for (let i = 0; i < (sentence.words?.length || 0); i++) {
-        if (!sentence.words[i].isDeleted && !isSilenceHidden(sentence.words[i]))
-          return { idx: i, word: sentence.words[i] }
-      }
-      return null
-    }
-
-    if (isDown) {
-      e.preventDefault()
-      const currentSentence = sentences[currentSentenceIdx]
-      if (!currentSentence?.words) return
-      const lines = getWordLines(currentSentence)
-      const currentLineIdx = lines.findIndex((line) =>
-        line.some((item) => item.idx === currentWordIdx),
-      )
-      if (currentLineIdx >= 0 && currentLineIdx < lines.length - 1) {
-        const nextLine = lines[currentLineIdx + 1]
-        const posInLine = lines[currentLineIdx].findIndex(
-          (item) => item.idx === currentWordIdx,
-        )
-        const nextWord = nextLine[Math.min(posInLine, nextLine.length - 1)]
-        setFocusedWord({
-          sentenceIdx: currentSentenceIdx,
-          wordIdx: nextWord.idx,
-        })
-        wordRefs.current[nextWord.word.start_at]?.scrollIntoView({
-          behavior: "instant",
-          block: "center",
-        })
-      } else {
-        // 다음 문장 중 삭제 안 된 단어가 있는 문장 찾기
-        for (let i = 1; i <= sentences.length; i++) {
-          const nextSentenceIdx = (currentSentenceIdx + i) % sentences.length
-          const firstWord = findFirstNonDeletedWord(sentences[nextSentenceIdx])
-          if (firstWord) {
-            setFocusedWord({
-              sentenceIdx: nextSentenceIdx,
-              wordIdx: firstWord.idx,
-            })
-            wordRefs.current[firstWord.word.start_at]?.scrollIntoView({
-              behavior: "instant",
-              block: "center",
-            })
-            break
-          }
-        }
-      }
-    }
-
-    if (isUp) {
-      e.preventDefault()
-      const currentSentence = sentences[currentSentenceIdx]
-      if (!currentSentence?.words) return
-      const lines = getWordLines(currentSentence)
-      const currentLineIdx = lines.findIndex((line) =>
-        line.some((item) => item.idx === currentWordIdx),
-      )
-      if (currentLineIdx > 0) {
-        const prevLine = lines[currentLineIdx - 1]
-        const posInLine = lines[currentLineIdx].findIndex(
-          (item) => item.idx === currentWordIdx,
-        )
-        const prevWord = prevLine[Math.min(posInLine, prevLine.length - 1)]
-        setFocusedWord({
-          sentenceIdx: currentSentenceIdx,
-          wordIdx: prevWord.idx,
-        })
-        wordRefs.current[prevWord.word.start_at]?.scrollIntoView({
-          behavior: "instant",
-          block: "center",
-        })
-      } else {
-        // 이전 문장 중 삭제 안 된 단어가 있는 문장 찾기
-        for (let i = 1; i <= sentences.length; i++) {
-          const prevSentenceIdx =
-            (currentSentenceIdx - i + sentences.length) % sentences.length
-          const prevLines = getWordLines(sentences[prevSentenceIdx])
-          if (prevLines.length > 0) {
-            const lastWord = prevLines[prevLines.length - 1][0]
-            setFocusedWord({
-              sentenceIdx: prevSentenceIdx,
-              wordIdx: lastWord.idx,
-            })
-            wordRefs.current[lastWord.word.start_at]?.scrollIntoView({
-              behavior: "instant",
-              block: "center",
-            })
-            break
-          }
-        }
-      }
-    }
-
-    if (isK) {
-      e.preventDefault()
-      if (!focusedWord) {
-        if (sentences[0]?.words?.length > 0)
-          setFocusedWord({ sentenceIdx: 0, wordIdx: 0 })
-        return
-      }
-      const word =
-        sentences[focusedWord.sentenceIdx]?.words?.[focusedWord.wordIdx]
-      if (!word || word.isDeleted) return
-      const wordId = word.id || word.start_at
-      setSelectedWordIds((prev) => {
-        const newSet = new Set(prev)
-        newSet.has(wordId) ? newSet.delete(wordId) : newSet.add(wordId)
-        return newSet
-      })
-    }
-    if (isSpace) {
-      e.preventDefault()
-      togglePlayback().catch(() => {})
-    }
-  }
+  const { handleKeyDown } = useKeyboardNavigation({
+    sentencesRef,
+    focusedWord,
+    setFocusedWord,
+    setSelectedWordIds,
+    wordRefs,
+    isSilenceHidden,
+  })
 
   // 파형에서 단어 구간 드래그로 변경 시
   const handleWordTimeChange = (wordId, newStart, newEnd) => {
@@ -545,248 +276,82 @@ export default function App() {
     containerRef.current?.focus()
   }
 
-  const handleApplySelected = async () => {
-    if (isProcessing || selectedWordIds.size === 0) {
-      setStatus("선택된 단어가 없습니다")
-      return
-    }
-    setIsProcessing(true)
-    setShowProcessingModal(true)
-    setStatus("트랙 잠금 해제...")
+  const { handleApplySelected, handleDeleteSentence } = useBatchEdit({
+    sentencesRef,
+    setSentences,
+    selectedWordIds,
+    setSelectedWordIds,
+    batchAbortRef,
+    isProcessing,
+    setIsProcessing,
+    setBatchProgress,
+    setShowProcessingModal,
+    setStatus,
+    addLog,
+    saveState,
+    formatBackupName,
+  })
+
+  const [isRefreshing, setIsRefreshing] = useState(true)
+
+  const loadSequenceInfo = async () => {
+    setIsRefreshing(true)
     try {
-      // 트랙 잠금 해제
-      await setAllTracksLocked(false)
-
-      setStatus("백업 중...")
-      const backupResult = await backupSequence(formatBackupName())
-      if (backupResult?.success)
-        await saveWordsData(backupResult.backupId, sentencesRef.current)
-      setStatus("일괄 적용 중...")
-      setBatchProgress({
-        current: 0,
-        total: selectedWordIds.size,
-        label: "일괄 적용",
-      })
-
-      const filterFn = (word) => {
-        const wordId = word.id || word.start_at
-        return (
-          selectedWordIds.has(wordId) &&
-          word.start_at_tick !== undefined &&
-          word.end_at_tick !== undefined
-        )
+      const [info] = await Promise.all([
+        getActiveSequenceInfo(),
+        new Promise((r) => setTimeout(r, 500)),
+      ])
+      if (info?.name) {
+        setSequenceInfo(info)
+        setStatus("연결됨")
+        const docId = await getProjectDocumentID()
+        addLog("info", `프로젝트 ID: ${docId}`)
+        addLog("info", `시퀀스 ID: ${info.id}`)
+        addLog("info", `시퀀스 이름: ${info.name}`)
+        if (info.id) {
+          const exists = await checkSavedState(info.id)
+          setHasSavedState(exists)
+        }
+      } else {
+        setSequenceInfo(null)
+        setStatus("시퀀스를 열어주세요")
       }
-      batchAbortRef.current = new AbortController()
-      const { deletedWordIds: actuallyDeleted, wordGaps } =
-        await batchDeleteWords(
-          filterFn,
-          sentencesRef.current,
-          (current, total) =>
-            setBatchProgress({ current, total, label: "일괄 적용" }),
-          addLog,
-          batchAbortRef.current.signal,
-        )
-      if (actuallyDeleted.size > 0) {
-        const updated = applyDeleteResult(
-          sentencesRef.current,
-          actuallyDeleted,
-          wordGaps,
-        )
-        sentencesRef.current = updated
-        setSentences(updated)
-        setSelectedWordIds(new Set())
-        const aborted = batchAbortRef.current?.signal?.aborted
-        setStatus(
-          aborted
-            ? `중단됨: ${actuallyDeleted.size}개 삭제 완료`
-            : `일괄 적용 완료: ${actuallyDeleted.size}개 단어`,
-        )
-      } else setStatus("적용할 단어가 없습니다")
-    } catch (error) {
-      setStatus("일괄 적용 실패: " + error.message)
+    } catch (e) {
+      setSequenceInfo(null)
+      setStatus("시퀀스를 열어주세요")
     } finally {
-      // 트랙 다시 잠금
-      await setAllTracksLocked(true)
-      setIsProcessing(false)
-      setBatchProgress(null)
-      setShowProcessingModal(false)
-      // 시퀀스 적용 후 상태 저장 (적용 완료된 sentences + 빈 selectedWordIds)
-      saveState({
-        sentences: sentencesRef.current,
-        selectedWordIds: new Set(),
-      })
+      setIsRefreshing(false)
+      setIsInitializing(false)
     }
   }
 
-  const handleDeleteSentence = (sentence) => {
-    const selectableWords = sentence.words.filter(
-      (w) =>
-        !w.isDeleted &&
-        w.start_at_tick !== undefined &&
-        w.end_at_tick !== undefined,
-    )
-    const selectableIds = selectableWords.map((w) => w.id || w.start_at)
-    if (selectableIds.length === 0) {
-      setStatus("선택할 단어가 없습니다")
-      return
-    }
-    const allSelected = selectableIds.every((id) => selectedWordIds.has(id))
-    setSelectedWordIds((prev) => {
-      const newSet = new Set(prev)
-      allSelected
-        ? selectableIds.forEach((id) => newSet.delete(id))
-        : selectableIds.forEach((id) => newSet.add(id))
-      return newSet
+  const { handleOpenHistory, handleBackupClick, handleRestoreConfirm } =
+    useBackupRestore({
+      sentencesRef,
+      setSentences,
+      selectedWordIds,
+      silenceSeconds,
+      timebaseRef,
+      restoreConfirm,
+      setRestoreConfirm,
+      setShowHistory,
+      setBackupList,
+      setStatus,
+      loadSequenceInfo,
     })
-    setStatus(
-      allSelected
-        ? `${selectableIds.length}개 단어 선택 해제`
-        : `${selectableIds.length}개 단어 선택됨`,
-    )
-  }
 
-  const handleOpenHistory = async () => {
-    const result = await getBackupList()
-    if (result?.success) {
-      setBackupList(result.backups || [])
-      setShowHistory(true)
-    }
-  }
-  const handleBackupClick = (backup) => setRestoreConfirm({ backup })
-
-  const handleRestoreConfirm = async () => {
-    if (!restoreConfirm?.backup) return
-    const backupId = restoreConfirm.backup.backupId
-    setRestoreConfirm(null)
-    setStatus("복원 중...")
-    const result = await restoreFromBackup(backupId)
-    if (result?.success) {
-      setShowHistory(false)
-      await setAllTracksLocked(true)
-      setStatus(`복원 완료: ${result.restoredName}`)
-      loadSequenceInfo()
-      const wordsResult = await loadWordsData(backupId, result.newSequenceId)
-      if (wordsResult?.success) {
-        const deletedWordSet = new Set(wordsResult.deletedWords || [])
-        const deletedSentenceSet = new Set(wordsResult.deletedSentences || [])
-        const updatedSentences = sentencesRef.current.map((sentence) => ({
-          ...sentence,
-          isDeleted: deletedSentenceSet.has(sentence.id),
-          words: sentence.words?.map((word) => ({
-            ...word,
-            isDeleted: deletedWordSet.has(word.id),
-          })),
-        }))
-        sentencesRef.current = updatedSentences
-        setSentences(updatedSentences)
-      }
-      // 백그라운드: 복원 매핑 API 호출
-      if (result.oldSequenceId && result.newSequenceId) {
-        const documentID = await getProjectDocumentID()
-        const cutPoints = prepareStateForSave(
-          sentencesRef.current,
-          silenceSeconds,
-          selectedWordIds,
-          timebaseRef.current,
-        )
-        fetch(`${API_URL}/transcribe/cut-points/copy`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            project_id: documentID,
-            sequence_id: result.newSequenceId,
-            prev_sequence_id: result.oldSequenceId,
-            cut_points: cutPoints,
-          }),
-        })
-          .then((res) => res.json())
-          .then((data) => console.log("[복원 매핑] 응답:", data))
-          .catch((e) => console.warn("[복원 매핑] 실패:", e.message))
-      }
-    } else setStatus(`복원 실패: ${result?.error || "알 수 없는 오류"}`)
-  }
-
-  // 무음/간투사 단어 목록 계산
-  const silenceWordIds = React.useMemo(() => {
-    const ids = new Set()
-    sentences.forEach((sentence) => {
-      sentence.words?.forEach((word) => {
-        if (
-          !word.isDeleted &&
-          word.edit_points?.type === "silence" &&
-          word.duration >= silenceThresholdMs &&
-          word.start_at_tick !== undefined &&
-          word.end_at_tick !== undefined
-        ) {
-          ids.add(word.id || word.start_at)
-        }
-      })
-    })
-    return ids
-  }, [sentences, silenceThresholdMs])
-
-  const fillerWordIds = React.useMemo(() => {
-    const ids = new Set()
-    sentences.forEach((sentence) => {
-      sentence.words?.forEach((word) => {
-        if (
-          !word.isDeleted &&
-          FILLER_TYPES.includes(word.edit_points?.type) &&
-          word.start_at_tick !== undefined &&
-          word.end_at_tick !== undefined
-        ) {
-          ids.add(word.id || word.start_at)
-        }
-      })
-    })
-    return ids
-  }, [sentences])
-
-  // 모든 무음/간투사가 선택되었는지 확인
-  const allSilenceSelected =
-    silenceWordIds.size > 0 &&
-    [...silenceWordIds].every((id) => selectedWordIds.has(id))
-  const allFillerSelected =
-    fillerWordIds.size > 0 &&
-    [...fillerWordIds].every((id) => selectedWordIds.has(id))
-
-  const handleSelectSilence = () => {
-    if (silenceWordIds.size === 0) {
-      setStatus("선택할 무음이 없습니다")
-      return
-    }
-
-    setSelectedWordIds((prev) => {
-      const next = new Set(prev)
-      if (allSilenceSelected) {
-        silenceWordIds.forEach((id) => next.delete(id))
-        setStatus(`무음 ${silenceWordIds.size}개 선택 해제`)
-      } else {
-        silenceWordIds.forEach((id) => next.add(id))
-        setStatus(`무음 ${silenceWordIds.size}개 선택`)
-      }
-      return next
-    })
-  }
-
-  const handleSelectFiller = () => {
-    if (fillerWordIds.size === 0) {
-      setStatus("선택할 간투사가 없습니다")
-      return
-    }
-
-    setSelectedWordIds((prev) => {
-      const next = new Set(prev)
-      if (allFillerSelected) {
-        fillerWordIds.forEach((id) => next.delete(id))
-        setStatus(`간투사 ${fillerWordIds.size}개 선택 해제`)
-      } else {
-        fillerWordIds.forEach((id) => next.add(id))
-        setStatus(`간투사 ${fillerWordIds.size}개 선택`)
-      }
-      return next
-    })
-  }
+  const {
+    allSilenceSelected,
+    allFillerSelected,
+    handleSelectSilence,
+    handleSelectFiller,
+  } = useWordSelection({
+    sentences,
+    selectedWordIds,
+    setSelectedWordIds,
+    silenceThresholdMs,
+    setStatus,
+  })
 
   const handleTranscribeFinish = async (taskId) => {
     if (!taskId) return
@@ -1007,41 +572,6 @@ export default function App() {
     }
   }
 
-  const [isRefreshing, setIsRefreshing] = useState(true)
-
-  const loadSequenceInfo = async () => {
-    setIsRefreshing(true)
-    try {
-      const [info] = await Promise.all([
-        getActiveSequenceInfo(),
-        new Promise((r) => setTimeout(r, 500)),
-      ])
-      if (info?.name) {
-        setSequenceInfo(info)
-        setStatus("연결됨")
-        // 프로젝트/시퀀스 ID 로그
-        const docId = await getProjectDocumentID()
-        addLog("info", `프로젝트 ID: ${docId}`)
-        addLog("info", `시퀀스 ID: ${info.id}`)
-        addLog("info", `시퀀스 이름: ${info.name}`)
-        if (info.id) {
-          // 초기 로드 시에도 저장 기록 확인
-          const exists = await checkSavedState(info.id)
-          setHasSavedState(exists)
-        }
-      } else {
-        setSequenceInfo(null)
-        setStatus("시퀀스를 열어주세요")
-      }
-    } catch (e) {
-      setSequenceInfo(null)
-      setStatus("시퀀스를 열어주세요")
-    } finally {
-      setIsRefreshing(false)
-      setIsInitializing(false)
-    }
-  }
-
   // 저장된 상태 불러오기 핸들러
   const handleLoadSavedState = async () => {
     try {
@@ -1117,491 +647,105 @@ export default function App() {
         </div>
       )}
 
-      {/* 헤더 */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <h1 className="text-base font-semibold">컷편집</h1>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleOpenHistory}
-            title="백업 히스토리"
-          >
-            <History className="h-4 w-4" />
-          </Button>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge className="bg-white text-[#2a2a2a] border-0">
-            v{getExtensionVersion()}
-          </Badge>
-          <Badge
-            variant={
-              sequenceInfo
-                ? "default"
-                : isRefreshing
-                  ? "secondary"
-                  : "destructive"
-            }
-            className="gap-1"
-          >
-            {isRefreshing ? (
-              <RefreshCw className="h-3 w-3 animate-spin" />
-            ) : (
-              <FolderOpen className="h-3 w-3" />
-            )}
-            {isRefreshing
-              ? "확인 중..."
-              : sequenceInfo
-                ? `연결됨 · ${sequenceInfo.name}`
-                : "시퀀스 연결 안됨"}
-          </Badge>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            onClick={loadSequenceInfo}
-            disabled={isRefreshing}
-            title="시퀀스 새로고침"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`}
-            />
-          </Button>
-        </div>
-      </div>
+      <AppHeader
+        onOpenHistory={handleOpenHistory}
+        sequenceInfo={sequenceInfo}
+        isRefreshing={isRefreshing}
+        onRefresh={loadSequenceInfo}
+        extensionVersion={getExtensionVersion()}
+      />
 
-      {/* 상태 바 */}
-      <Card className="mb-3">
-        <CardContent className="py-2 px-3 text-sm text-muted-foreground flex items-center justify-between">
-          <span>{status}</span>
-          {status === "시퀀스를 열어주세요" && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 gap-1 px-2"
-              onClick={loadSequenceInfo}
-            >
-              <RefreshCw
-                className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`}
-              />
-              새로고침
-            </Button>
-          )}
-        </CardContent>
-      </Card>
+      <StatusBar
+        status={status}
+        isRefreshing={isRefreshing}
+        onRefresh={loadSequenceInfo}
+      />
 
-      {/* 업로드 진행 */}
-      {isUpload && uploadFile && (
-        <Card className="mb-3">
-          <CardContent className="py-3 px-3">
-            <div className="flex justify-between mb-2 text-sm">
-              <span>{uploadFile.message}</span>
-              {uploadFile.progress > 0 && (
-                <span className="text-primary">{uploadFile.progress}%</span>
-              )}
-            </div>
-            <Progress value={uploadFile.progress || 0} className="mb-3" />
-            <Button
-              variant="destructive"
-              size="sm"
-              className="w-full"
-              onClick={onClickCancel}
-            >
-              취소
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+      <UploadProgress
+        isUpload={isUpload}
+        uploadFile={uploadFile}
+        onCancel={onClickCancel}
+      />
 
-      {/* 배치 진행 */}
-      {batchProgress && (
-        <Card className="mb-3">
-          <CardContent className="py-3 px-3">
-            <div className="flex justify-between mb-2 text-sm">
-              <span>{batchProgress.label}</span>
-              <span className="text-muted-foreground">
-                {batchProgress.current} / {batchProgress.total} 단어{" "}
-                {batchProgress.total > 0 && (
-                  <span className="text-primary ml-2">
-                    {Math.round(
-                      (batchProgress.current / batchProgress.total) * 100,
-                    )}
-                    %
-                  </span>
-                )}
-              </span>
-            </div>
-            <Progress
-              value={
-                batchProgress.total > 0
-                  ? (batchProgress.current / batchProgress.total) * 100
-                  : 0
-              }
-            />
-          </CardContent>
-        </Card>
-      )}
+      <BatchProgress batchProgress={batchProgress} />
 
-      {/* 로그 패널 */}
-      {logs.length > 0 && (
-        <Card className="mb-3 flex-shrink-0">
-          <div className="flex items-center justify-between px-3 py-1.5 border-b border-border">
-            <span className="text-xs text-muted-foreground font-mono">
-              로그 ({logs.length})
-            </span>
-            <div className="flex gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-5 w-5"
-                onClick={copyLogs}
-                title="로그 복사"
-              >
-                <ClipboardCopy className="h-3 w-3" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-5 w-5"
-                onClick={clearLogs}
-                title="로그 삭제"
-              >
-                <X className="h-3 w-3" />
-              </Button>
-            </div>
-          </div>
-          <div
-            ref={logPanelRef}
-            className="h-[100px] overflow-y-auto p-2 font-mono text-[11px]"
-          >
-            {logs.map((log, i) => (
-              <div
-                key={i}
-                className={`leading-relaxed break-all ${
-                  log.level === "error"
-                    ? "text-red-400"
-                    : log.level === "warn"
-                      ? "text-yellow-400"
-                      : "text-green-400"
-                }`}
-              >
-                <span className="text-muted-foreground mr-1.5">
-                  {log.time.toLocaleTimeString("ko-KR", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                  })}
-                </span>
-                {log.message}
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
+      <LogPanel
+        logs={logs}
+        onCopy={copyLogs}
+        onClear={clearLogs}
+        logPanelRef={logPanelRef}
+      />
 
-      {/* 액션 버튼 */}
-      <div className="flex flex-wrap gap-2 mb-3 items-center">
-        {sentences.length > 0 && (
-          <div className="flex items-center gap-2 w-full mb-1">
-            <span className="text-xs text-muted-foreground whitespace-nowrap">
-              최소 무음 길이
-            </span>
-            <Slider
-              value={[
-                isNaN(parseFloat(silenceSeconds))
-                  ? 1
-                  : parseFloat(silenceSeconds),
-              ]}
-              onValueChange={([v]) => setSilenceSeconds(String(v))}
-              min={0.5}
-              max={5}
-              step={0.05}
-              disabled={isUpload}
-              className="flex-1"
-            />
-            <Input
-              type="number"
-              step="0.05"
-              min="0.5"
-              max="5"
-              value={silenceSeconds}
-              onChange={(e) => setSilenceSeconds(e.target.value)}
-              disabled={isUpload}
-              className="w-[70px] h-7 text-xs text-center"
-            />
-            <span className="text-xs text-muted-foreground">seconds</span>
-          </div>
-        )}
-        <Button
-          size="sm"
-          disabled={!isConnected || isUpload}
-          onClick={onClickRenderAudio}
-        >
-          <Mic className="h-4 w-4 mr-1.5" />
-          {isUpload
-            ? "받아쓰는 중..."
-            : sentences.length > 0
-              ? "다시 받아쓰기"
-              : "받아쓰기"}
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          className={
-            allSilenceSelected ? "border border-[#ffa500] text-[#ffa500]" : ""
+      <CutEditControls
+        silenceSeconds={silenceSeconds}
+        onSilenceChange={setSilenceSeconds}
+        onTranscribe={onClickRenderAudio}
+        isUpload={isUpload}
+        isConnected={isConnected}
+        isProcessing={isProcessing}
+        sentences={sentences}
+        allSilenceSelected={allSilenceSelected}
+        allFillerSelected={allFillerSelected}
+        onSelectSilence={handleSelectSilence}
+        onSelectFiller={handleSelectFiller}
+      />
+
+      <SavedStateBanner
+        hasSavedState={hasSavedState}
+        isUpload={isUpload}
+        isRestoring={isRestoring}
+        onLoad={handleLoadSavedState}
+      />
+
+      <SentenceList
+        sentences={sentences}
+        focusedWord={focusedWord}
+        currentWordId={currentWordId}
+        currentWordSentenceIdx={currentWordSentenceIdx}
+        selectedWordIds={selectedWordIds}
+        searchResultsSet={searchResultsSet}
+        currentSearchWordId={currentSearchWordId}
+        silenceThresholdMs={silenceThresholdMs}
+        wordRefs={wordRefs}
+        onWordClick={handleWordClick}
+        onDeleteSentence={handleDeleteSentence}
+        onSentencePlay={(sIdx, wIdx) =>
+          setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
+        }
+        isUpload={isUpload}
+      />
+
+      <ApplyButton
+        selectedWordIds={selectedWordIds}
+        onApply={handleApplySelected}
+        isProcessing={isProcessing}
+        isConnected={isConnected}
+        isUpload={isUpload}
+      />
+
+      <BackupHistoryDialog
+        open={showHistory}
+        onClose={setShowHistory}
+        backupList={backupList}
+        onBackupClick={handleBackupClick}
+      />
+
+      <RestoreConfirmDialog
+        restoreConfirm={restoreConfirm}
+        onConfirm={handleRestoreConfirm}
+        onCancel={() => setRestoreConfirm(null)}
+      />
+
+      <ProcessingModal
+        open={showProcessingModal}
+        batchProgress={batchProgress}
+        onAbort={() => {
+          if (batchAbortRef.current) {
+            batchAbortRef.current.abort()
+            addLog("warn", "사용자가 작업을 중단했습니다")
           }
-          style={
-            allSilenceSelected
-              ? { border: "1px solid #ffa500", color: "#ffa500" }
-              : {}
-          }
-          disabled={
-            !isConnected || isUpload || isProcessing || sentences.length === 0
-          }
-          onClick={handleSelectSilence}
-        >
-          <VolumeX
-            className={`h-4 w-4 mr-1.5 ${allSilenceSelected ? "text-[#ffa500]" : ""}`}
-          />
-          {allSilenceSelected ? "무음 선택해제" : "무음 선택"}
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          className={
-            allFillerSelected ? "border border-[#ffa500] text-[#ffa500]" : ""
-          }
-          style={
-            allFillerSelected
-              ? { border: "1px solid #ffa500", color: "#ffa500" }
-              : {}
-          }
-          disabled={
-            !isConnected || isUpload || isProcessing || sentences.length === 0
-          }
-          onClick={handleSelectFiller}
-        >
-          <MessageCircle
-            className={`h-4 w-4 mr-1.5 ${allFillerSelected ? "text-[#ffa500]" : ""}`}
-          />
-          {allFillerSelected ? "간투사 선택해제" : "간투사 선택"}
-        </Button>
-      </div>
-
-      {/* 저장 기록 불러오기 안내 */}
-      {hasSavedState && !isUpload && (
-        <Card className="mb-3 border-blue-500 bg-blue-950/30">
-          <CardContent className="py-4 px-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <History className="w-4 h-4 text-blue-400" />
-              <span className="text-sm font-medium text-blue-300">
-                이미 받아쓴 기록이 있습니다
-              </span>
-            </div>
-            <Button
-              size="sm"
-              variant="default"
-              className="bg-blue-600 hover:bg-blue-700"
-              onClick={handleLoadSavedState}
-              disabled={isRestoring}
-            >
-              {isRestoring ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                "불러오기"
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* [테스트] Peaks 생성/로드 */}
-
-      {/* 문장 목록 */}
-      <Card className="flex-1 overflow-hidden">
-        <CardContent className="p-3 overflow-y-auto h-full">
-          {isUpload ? (
-            <div className="text-muted-foreground text-center py-8">
-              <div className="animate-pulse">
-                <p className="text-base">받아쓰는 중...</p>
-              </div>
-            </div>
-          ) : sentences.length > 0 ? (
-            sentences.map((sentence, sentenceIdx) => (
-              <Sentence
-                key={sentence.id}
-                sentence={sentence}
-                sentences={sentences}
-                sentenceIdx={sentenceIdx}
-                focusedWord={focusedWord}
-                currentWordId={currentWordId}
-                currentWordSentenceIdx={currentWordSentenceIdx}
-                selectedWordIds={selectedWordIds}
-                onWordClick={handleWordClick}
-                onDeleteSentence={handleDeleteSentence}
-                onSentencePlay={(sIdx, wIdx) =>
-                  setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
-                }
-                searchResultsSet={searchResultsSet}
-                currentSearchWordId={currentSearchWordId}
-                wordRefs={wordRefs}
-                silenceThresholdMs={silenceThresholdMs}
-              />
-            ))
-          ) : (
-            <p className="text-muted-foreground text-center py-8">
-              소스클립을 받아쓰지 않았습니다
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* 백업 히스토리 */}
-      <Dialog open={showHistory} onOpenChange={setShowHistory}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>백업 히스토리</DialogTitle>
-          </DialogHeader>
-          <div className="max-h-[300px] overflow-y-auto">
-            {backupList.length > 0 ? (
-              <div className="space-y-2">
-                {backupList.map((backup, idx) => (
-                  <Card
-                    key={backup.backupId || idx}
-                    className="cursor-pointer hover:bg-accent transition-colors"
-                    onClick={() => handleBackupClick(backup)}
-                  >
-                    <CardContent className="py-2.5 px-3 flex items-center gap-2.5">
-                      <FolderOpen className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">{backup.name}</span>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                백업이 없습니다
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setShowHistory(false)}>
-              닫기
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 복원 확인 */}
-      <Dialog
-        open={!!restoreConfirm}
-        onOpenChange={() => setRestoreConfirm(null)}
-      >
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>복원 확인</DialogTitle>
-          </DialogHeader>
-          {restoreConfirm && (
-            <div>
-              <Card className="mb-4">
-                <CardContent className="py-3 px-3">
-                  <p className="text-xs text-muted-foreground mb-0.5">
-                    백업 이름
-                  </p>
-                  <p className="text-sm font-medium">
-                    {restoreConfirm.backup.name}
-                  </p>
-                </CardContent>
-              </Card>
-              <p className="text-sm text-muted-foreground text-center">
-                이 백업으로 복원하시겠습니까?
-                <br />
-                현재 시퀀스는 Archive 폴더로 이동됩니다.
-              </p>
-            </div>
-          )}
-          <DialogFooter className="gap-2">
-            <Button variant="secondary" onClick={() => setRestoreConfirm(null)}>
-              취소
-            </Button>
-            <Button onClick={handleRestoreConfirm}>확인</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 작업 중 안내 모달 */}
-      <Dialog open={showProcessingModal}>
-        <DialogContent
-          className="max-w-sm [&>button]:hidden"
-          onPointerDownOutside={(e) => e.preventDefault()}
-        >
-          <DialogHeader>
-            <DialogTitle>⚠️ 작업 중</DialogTitle>
-          </DialogHeader>
-          <div className="py-4">
-            <p className="text-sm text-muted-foreground text-center mb-4">
-              시퀀스에 편집을 적용하고 있습니다.
-              <br />
-              <strong>
-                완료될 때까지 시퀀스를 이동하거나
-                <br />
-                조작하지 마세요!
-              </strong>
-            </p>
-            {batchProgress && (
-              <div>
-                <div className="flex justify-between mb-2 text-sm">
-                  <span>{batchProgress.label}</span>
-                  <span>
-                    {batchProgress.current} / {batchProgress.total}
-                  </span>
-                </div>
-                <Progress
-                  value={
-                    batchProgress.total > 0
-                      ? (batchProgress.current / batchProgress.total) * 100
-                      : 0
-                  }
-                />
-                <div className="flex justify-center mt-4">
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => {
-                      if (batchAbortRef.current) {
-                        batchAbortRef.current.abort()
-                        addLog("warn", "사용자가 작업을 중단했습니다")
-                      }
-                    }}
-                  >
-                    <X className="h-3 w-3 mr-1" />
-                    중단
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* 적용 버튼 */}
-      <div className="flex justify-end mt-2">
-        <Button
-          variant={selectedWordIds.size > 0 ? "default" : "secondary"}
-          size="sm"
-          disabled={
-            selectedWordIds.size === 0 ||
-            !isConnected ||
-            isUpload ||
-            isProcessing
-          }
-          onClick={handleApplySelected}
-        >
-          <Scissors className="h-4 w-4 mr-2" />
-          시퀀스에 적용{" "}
-          {selectedWordIds.size > 0 && `(${selectedWordIds.size})`}
-        </Button>
-      </div>
+        }}
+      />
 
       {/* 하단 파형 패널 */}
       <WaveformPanel
