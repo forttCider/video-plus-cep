@@ -45,7 +45,7 @@ export default function WaveformPanel({
     sentences.forEach((sentence, sIdx) => {
       sentence.words?.forEach((word, wIdx) => {
         if (
-          !word.isDeleted &&
+          !word.is_deleted &&
           !(
             word.edit_points?.type === "silence" &&
             word.duration < silenceThresholdMs

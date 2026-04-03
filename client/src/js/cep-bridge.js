@@ -59,9 +59,23 @@ export function registerKeyEvents() {
     const keyEvents = []
     for (let i = 0; i <= 126; i++) {
       keyEvents.push({ keyCode: i })
+      // Cmd/Ctrl 조합도 등록
+      if (isMac) {
+        keyEvents.push({ keyCode: i, metaKey: true })
+        keyEvents.push({ keyCode: i, metaKey: true, shiftKey: true })
+      } else {
+        keyEvents.push({ keyCode: i, ctrlKey: true })
+        keyEvents.push({ keyCode: i, ctrlKey: true, shiftKey: true })
+      }
     }
 
     cs.registerKeyEventsInterest(JSON.stringify(keyEvents))
+
+    // 패널이 다시 보일 때 재등록 (Premiere가 등록을 해제할 수 있음)
+    cs.addEventListener("com.adobe.csxs.events.WindowVisibilityChanged", () => {
+      cs.registerKeyEventsInterest(JSON.stringify(keyEvents))
+    })
+
     return isMac
   } catch (e) {
     console.error("[CEP] 키보드 이벤트 등록 실패:", e)
@@ -358,12 +372,12 @@ export async function saveWordsData(backupId, sentences) {
     const deletedSentences = []
 
     for (const sentence of sentences) {
-      if (sentence.isDeleted && sentence.id) {
+      if (sentence.is_deleted && sentence.id) {
         deletedSentences.push(sentence.id)
       }
       if (sentence.words) {
         for (const word of sentence.words) {
-          if (word.isDeleted && word.id) {
+          if (word.is_deleted && word.id) {
             deletedWords.push(word.id)
           }
         }
@@ -749,4 +763,57 @@ export async function cloneAndArchiveSequence() {
   } catch {
     return { success: false, error: result }
   }
+}
+
+/**
+ * 캡션 빈 존재 여부 확인
+ */
+export async function hasCaptionsBin() {
+  const result = await evalJSON("hasCaptionsBin()")
+  return result?.exists === true
+}
+
+/**
+ * 자막 SRT 생성 + Premiere 임포트
+ * @param {Array} originalSentences - 원본 sentences (오프셋 계산용)
+ * @param {Array} subsSentences - 자막편집 sentences (자막 구조용)
+ */
+export async function exportCaptionsAsSRT(originalSentences, subsSentences) {
+  // 원본 sentences에서 삭제된 단어의 누적 오프셋 계산
+  const allWords = originalSentences
+    .flatMap((s) => s.words || [])
+    .sort((a, b) => (a.start_at || 0) - (b.start_at || 0))
+
+  const TICKS_PER_SECOND = 254016000000
+  const offsetMap = new Map()
+  let accOffset = 0
+  for (const w of allWords) {
+    if (w.is_deleted) {
+      const duration = (w.end_at || 0) - (w.start_at || 0)
+      const gapMs =
+        (Number(BigInt(w.gap_after_tick || 0)) / TICKS_PER_SECOND) * 1000
+      accOffset += duration + gapMs
+    } else {
+      offsetMap.set(w.start_at, accOffset)
+    }
+  }
+
+  // subsSentences 기준으로 자막 구조 생성 + 오프셋 보정
+  const lightData = subsSentences
+    .filter((s) => !s.is_deleted)
+    .map((s) => ({
+      spk: s.spk || 0,
+      words: (s.words || [])
+        .filter((w) => !w.is_deleted && !w.is_edit && w.text)
+        .map((w) => {
+          const off = offsetMap.get(w.start_at) || 0
+          return { t: w.text, s: w.start_at - off, e: w.end_at - off }
+        }),
+    }))
+    .filter((s) => s.words.length > 0)
+
+  const data = JSON.stringify(lightData)
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+  return evalJSON(`exportCaptionsAsSRT('${data}')`)
 }

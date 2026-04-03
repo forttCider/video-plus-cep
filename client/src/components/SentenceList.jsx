@@ -22,6 +22,8 @@ export default function SentenceList({
   editingWord,
   onStartEditing,
   onWordTextUpdate,
+  onWordEditingEnd,
+  originalSentences,
 }) {
   return (
     <Card className="flex-1 overflow-hidden">
@@ -58,6 +60,8 @@ export default function SentenceList({
               editingWord={editingWord}
               onStartEditing={onStartEditing}
               onWordTextUpdate={onWordTextUpdate}
+              onWordEditingEnd={onWordEditingEnd}
+              originalSentences={originalSentences}
             />
           ))
         ) : (

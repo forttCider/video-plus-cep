@@ -16,13 +16,13 @@ export function splitForSubtitles(sentences, maxWords = DEFAULT_maxWords) {
   const result = []
 
   for (const sentence of sentences) {
-    if (sentence.isDeleted) {
+    if (sentence.is_deleted) {
       result.push(sentence)
       continue
     }
 
     const visibleWords = (sentence.words || []).filter(
-      (w) => !w.isDeleted && !w.isEdit && w.text,
+      (w) => !w.is_deleted && !w.is_edit && w.text,
     )
 
     if (visibleWords.length === 0) {

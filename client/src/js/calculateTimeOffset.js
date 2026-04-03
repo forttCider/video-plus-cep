@@ -41,10 +41,10 @@ export function buildTimelineIndex(sentences) {
   let accumulatedOffsetTick = 0n;
 
   for (const word of sortedWords) {
-    if (word.isDeleted) {
+    if (word.is_deleted) {
       const startTick = BigInt(word.start_at_tick || 0);
       const endTick = BigInt(word.end_at_tick || 0);
-      const gapTick = BigInt(word.gapAfterTick || 0);
+      const gapTick = BigInt(word.gap_after_tick || 0);
       const durationTick = endTick - startTick + gapTick;
 
       // 삭제 구간 저장 (연속 구간 병합 — gap 포함)
@@ -73,12 +73,12 @@ export function buildTimelineIndex(sentences) {
       adjustedStart: Number(startTick - accumulatedOffsetTick) / TICKS_PER_SECOND,
       adjustedEnd: Number(endTick - accumulatedOffsetTick) / TICKS_PER_SECOND,
       word,
-      sentence: sentenceMap.get(word.parentId),
+      sentence: sentenceMap.get(word.parent_id),
     });
   }
 
   // 디버그: 오프셋 계산 결과
-  console.log("[buildTimelineIndex] 삭제 구간:", deletedIntervals.length, "총 오프셋(초):", Number(accumulatedOffsetTick) / TICKS_PER_SECOND)
+
 
   // 캐시 업데이트
   deletedIntervalsCache = deletedIntervals;
@@ -144,9 +144,9 @@ export function getTimelinePosition(targetWord, sentences) {
       };
     }
 
-    if (word.isDeleted) {
+    if (word.is_deleted) {
       const wordDuration = word.end_at_sec - word.start_at_sec;
-      const gapSec = Number(BigInt(word.gapAfterTick || 0)) / TICKS_PER_SECOND;
+      const gapSec = Number(BigInt(word.gap_after_tick || 0)) / TICKS_PER_SECOND;
       accumulatedOffset += wordDuration + gapSec;
     }
   }
@@ -183,8 +183,8 @@ export function getTimelinePositionTick(targetWord, sentences) {
       return { startTick: timelineStartTick };
     }
 
-    if (word.isDeleted && word.start_at_tick && word.end_at_tick) {
-      const gapTick = BigInt(word.gapAfterTick || 0);
+    if (word.is_deleted && word.start_at_tick && word.end_at_tick) {
+      const gapTick = BigInt(word.gap_after_tick || 0);
       accumulatedOffsetTick +=
         BigInt(word.end_at_tick) - BigInt(word.start_at_tick) + gapTick;
     }

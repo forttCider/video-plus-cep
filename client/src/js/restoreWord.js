@@ -39,7 +39,7 @@ export async function restoreWordFromTimeline(word, sentences) {
   // 소스 미디어 위치 계산 (프레임 정렬된 tick - initWords에서 이미 정렬됨)
   const startAtTick = BigInt(word.start_at_tick || 0);
   const endAtTick = BigInt(word.end_at_tick || 0);
-  const firstGapTick = BigInt(word.firstGapTick || 0);
+  const firstGapTick = BigInt(word.first_gap_tick || 0);
   
   // 소스 미디어 위치
   const sourceIn = startAtTick + firstGapTick;

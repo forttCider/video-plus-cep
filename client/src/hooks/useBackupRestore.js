@@ -50,10 +50,10 @@ export default function useBackupRestore({
         const deletedSentenceSet = new Set(wordsResult.deletedSentences || [])
         const updatedSentences = sentencesRef.current.map((sentence) => ({
           ...sentence,
-          isDeleted: deletedSentenceSet.has(sentence.id),
+          is_deleted: deletedSentenceSet.has(sentence.id),
           words: sentence.words?.map((word) => ({
             ...word,
-            isDeleted: deletedWordSet.has(word.id),
+            is_deleted: deletedWordSet.has(word.id),
           })),
         }))
         sentencesRef.current = updatedSentences

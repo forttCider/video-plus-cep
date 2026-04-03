@@ -2887,3 +2887,178 @@ function getProjectDocumentID() {
     try { return app.project.documentID; }
     catch(e) { return ""; }
 }
+
+function hasCaptionsBin() {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return '{"exists":false}';
+
+        var props = [];
+        for (var key in seq) {
+            try {
+                if (key.toLowerCase().indexOf("caption") !== -1 || key.toLowerCase().indexOf("subtitle") !== -1) {
+                    props.push(key + ":" + typeof seq[key]);
+                }
+            } catch(e) {}
+        }
+
+        var vt = seq.videoTracks ? seq.videoTracks.numTracks : -1;
+        var at = seq.audioTracks ? seq.audioTracks.numTracks : -1;
+
+        return '{"exists":false,"videoTracks":' + vt + ',"audioTracks":' + at + ',"captionProps":"' + props.join(",") + '"}';
+    } catch (e) {
+        return '{"exists":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
+    }
+}
+
+function msToSRTTime(ms) {
+    ms = Math.round(ms);
+    var h = Math.floor(ms / 3600000);
+    var m = Math.floor((ms % 3600000) / 60000);
+    var s = Math.floor((ms % 60000) / 1000);
+    var mill = ms % 1000;
+    function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+    function pad3(n) { return n < 10 ? "00" + n : n < 100 ? "0" + n : "" + n; }
+    return pad2(h) + ":" + pad2(m) + ":" + pad2(s) + "," + pad3(mill);
+}
+
+function exportCaptionsAsSRT(sentencesJSON) {
+    try {
+        if (!app.project || !app.project.path) {
+            return '{"success":false,"error":"프로젝트가 저장되지 않았습니다"}';
+        }
+
+        var sentences = eval('(' + sentencesJSON + ')');
+        var projectPath = app.project.path;
+        var folderPath = projectPath.substring(0, projectPath.lastIndexOf('/'));
+
+        var captionsFolder = new Folder(folderPath + "/captions");
+        if (!captionsFolder.exists) {
+            captionsFolder.create();
+        }
+
+        // 전체 자막 항목 생성 (시간순)
+        var allEntries = [];
+        for (var i = 0; i < sentences.length; i++) {
+            var sentence = sentences[i];
+            var spk = (sentence.spk !== undefined && sentence.spk !== null) ? sentence.spk : 0;
+
+            var words = [];
+            var minStart = Infinity;
+            var maxEnd = 0;
+            for (var w = 0; w < sentence.words.length; w++) {
+                var word = sentence.words[w];
+                words.push(word.t);
+                if (word.s < minStart) minStart = word.s;
+                if (word.e > maxEnd) maxEnd = word.e;
+            }
+
+            if (words.length > 0) {
+                allEntries.push({
+                    spk: spk,
+                    text: words.join(" "),
+                    startMs: minStart,
+                    endMs: maxEnd
+                });
+            }
+        }
+
+        // 시간순 정렬
+        allEntries.sort(function(a, b) { return a.startMs - b.startMs; });
+
+        // 빈 공간 제거: 각 자막의 endMs를 전체 다음 자막(화자 무관)의 startMs로 설정
+        for (var gi = 0; gi < allEntries.length - 1; gi++) {
+            allEntries[gi].endMs = allEntries[gi + 1].startMs;
+        }
+
+        // 화자별 그룹핑
+        var speakerMap = {};
+        for (var ai = 0; ai < allEntries.length; ai++) {
+            var entry = allEntries[ai];
+            if (!speakerMap[entry.spk]) {
+                speakerMap[entry.spk] = [];
+            }
+            speakerMap[entry.spk].push(entry);
+        }
+
+        var speakerKeys = [];
+        for (var key in speakerMap) {
+            if (speakerMap.hasOwnProperty(key)) {
+                speakerKeys.push(key);
+            }
+        }
+
+        // 기존 SRT 파일 삭제
+        var existingFiles = captionsFolder.getFiles("*.srt");
+        if (existingFiles) {
+            for (var di = 0; di < existingFiles.length; di++) {
+                existingFiles[di].remove();
+            }
+        }
+
+        // 화자별 SRT 파일 생성
+        var srtFiles = [];
+        for (var si = 0; si < speakerKeys.length; si++) {
+            var spkKey = speakerKeys[si];
+            var spkEntries = speakerMap[spkKey];
+            var srtContent = "";
+            var crlf = "\r\n";
+
+            for (var ei = 0; ei < spkEntries.length; ei++) {
+                var entry = spkEntries[ei];
+                srtContent += (ei + 1) + crlf;
+                srtContent += msToSRTTime(entry.startMs) + " --> " + msToSRTTime(entry.endMs) + crlf;
+                srtContent += entry.text + crlf + crlf;
+            }
+
+            var ts = new Date().getTime();
+            var srtPath = captionsFolder.fsName + "/speaker" + (parseInt(spkKey, 10) + 1) + "_" + ts + ".srt";
+            var srtFile = new File(srtPath);
+            srtFile.encoding = "UTF-8";
+            srtFile.lineFeed = "Unix";
+            srtFile.open("w");
+            srtFile.write("\uFEFF" + srtContent);
+            srtFile.close();
+            srtFiles.push(srtPath);
+        }
+
+        if (srtFiles.length === 0) {
+            return '{"success":false,"error":"내보낼 자막이 없습니다"}';
+        }
+
+        // Premiere 프로젝트에 임포트
+        var rootItem = app.project.rootItem;
+        var captionsBin = null;
+        for (var bi = 0; bi < rootItem.children.numItems; bi++) {
+            var child = rootItem.children[bi];
+            if (child.name === "videoPlus Captions" && child.type === 2) {
+                captionsBin = child;
+                break;
+            }
+        }
+        if (captionsBin) {
+            captionsBin.deleteBin();
+        }
+        captionsBin = app.project.rootItem.createBin("videoPlus Captions");
+
+        var importedCount = 0;
+        for (var fi = 0; fi < srtFiles.length; fi++) {
+            app.project.importFiles([srtFiles[fi]], true, captionsBin, false);
+        }
+
+        var seq = app.project.activeSequence;
+        if (seq) {
+            for (var ci = 0; ci < captionsBin.children.numItems; ci++) {
+                var item = captionsBin.children[ci];
+                if (item.name && item.name.indexOf(".srt") !== -1) {
+                    seq.createCaptionTrack(item, 0);
+                    importedCount++;
+                }
+            }
+        }
+
+        return '{"success":true,"speakers":' + speakerKeys.length + ',"files":' + importedCount + '}';
+    } catch (e) {
+        return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
+    }
+}

@@ -191,7 +191,7 @@ export async function deleteWordXML(word, sentences) {
       if (sentence.words) {
         for (const w of sentence.words) {
           // 현재 단어보다 앞에 있고, 이미 삭제된 단어
-          if (w.isDeleted && w.start_at < word.start_at) {
+          if (w.is_deleted && w.start_at < word.start_at) {
             const wDuration = (w.end_at - w.start_at) / 1000; // ms → sec
             deletedOffset += wDuration;
           }

@@ -1,5 +1,5 @@
 import React from "react"
-import { History, FolderOpen, RefreshCw } from "lucide-react"
+import { History, RefreshCw, Undo2, Redo2 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Badge } from "./ui/badge"
 
@@ -7,6 +7,10 @@ export default function AppHeader({
   activeTab,
   onTabChange,
   onOpenHistory,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
   sequenceInfo,
   isRefreshing,
   onRefresh,
@@ -14,25 +18,29 @@ export default function AppHeader({
 }) {
   return (
     <div className="mb-2">
-      {/* 1줄: 탭 + 연결 */}
+      {/* 1줄: 탭 + 연결 상태 */}
       <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-1">
-          <Button
-            variant={activeTab === "cut" ? "default" : "ghost"}
-            size="sm"
-            className="h-7 px-3 text-xs"
+        <div className="flex items-center gap-3">
+          <button
+            className={`text-xs font-semibold pb-1 border-b-2 transition-colors ${
+              activeTab === "cut"
+                ? "border-white text-white"
+                : "border-transparent text-muted-foreground hover:text-white"
+            }`}
             onClick={() => onTabChange("cut")}
           >
             컷편집
-          </Button>
-          <Button
-            variant={activeTab === "subs" ? "default" : "ghost"}
-            size="sm"
-            className="h-7 px-3 text-xs"
+          </button>
+          <button
+            className={`text-xs font-semibold pb-1 border-b-2 transition-colors ${
+              activeTab === "subs"
+                ? "border-white text-white"
+                : "border-transparent text-muted-foreground hover:text-white"
+            }`}
             onClick={() => onTabChange("subs")}
           >
             자막편집
-          </Button>
+          </button>
         </div>
 
         <div className="flex items-center gap-1">
@@ -48,14 +56,13 @@ export default function AppHeader({
           >
             {isRefreshing ? (
               <RefreshCw className="h-3 w-3 animate-spin" />
+            ) : isRefreshing ? (
+              "확인 중..."
+            ) : sequenceInfo ? (
+              <>연결됨 &middot; {sequenceInfo.name}</>
             ) : (
-              <FolderOpen className="h-3 w-3" />
+              "미연결"
             )}
-            {isRefreshing
-              ? "확인 중..."
-              : sequenceInfo
-                ? "연결됨"
-                : "미연결"}
           </Badge>
           <Button
             variant="ghost"
@@ -72,24 +79,48 @@ export default function AppHeader({
         </div>
       </div>
 
-      {/* 2줄: 제목/히스토리 + 상태 */}
-      <div className="flex items-center justify-between">
+      {/* 2줄: 탭 제목 + 히스토리/undo/redo + 상태 */}
+      <div className="flex items-center justify-between mt-5">
         <div className="flex items-center gap-1">
-          <span className="text-xs font-medium text-muted-foreground">
-            {sequenceInfo?.name || "시퀀스 없음"}
+          <span className="text-xl font-bold">
+            {activeTab === "cut" ? "컷편집" : "자막편집"}
           </span>
           <Button
             variant="ghost"
             size="icon"
-            className="h-5 w-5"
+            className="h-7 w-7"
             onClick={onOpenHistory}
             title="백업 히스토리"
           >
-            <History className="h-3 w-3" />
+            <History className="h-4 w-4" />
           </Button>
+          {activeTab === "subs" && (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onUndo}
+                disabled={!canUndo}
+                title="실행 취소"
+              >
+                <Undo2 className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onRedo}
+                disabled={!canRedo}
+                title="다시 실행"
+              >
+                <Redo2 className="h-4 w-4" />
+              </Button>
+            </>
+          )}
         </div>
 
-        <span className="text-[10px] text-muted-foreground truncate max-w-[160px]">
+        <span className="text-xs text-muted-foreground truncate max-w-[200px]">
           {status}
         </span>
       </div>

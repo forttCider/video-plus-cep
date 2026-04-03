@@ -8,24 +8,29 @@ export default function useKeyboardNavigation({
   wordRefs,
   isSilenceHidden,
 }) {
-  const handleKeyDown = (e) => {
+  const handleKey = (e) => {
     if (!sentencesRef.current || sentencesRef.current.length === 0) return
-    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return
+    if ((e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") && !e.target.dataset.focusTrap) return
+    const kc = e.keyCode
+
+    // Space: keydown에서 처리 (preventDefault로 스크롤 방지)
+    if (e.type === "keydown") {
+      if (kc === 32) { e.preventDefault(); togglePlayback().catch(() => {}); }
+      return
+    }
+
+    // keyup에서 나머지 처리 (WASD, 화살표, K - 한국어 IME 229 우회)
+    if (kc === 229) return
+
     const sentences = sentencesRef.current
     const currentSentenceIdx = focusedWord?.sentenceIdx ?? 0
     const currentWordIdx = focusedWord?.wordIdx ?? 0
-    const key = e.key?.toLowerCase()
-    const keyCode = e.keyCode
-    const isLeft =
-      key === "a" || key === "ㅁ" || keyCode === 37 || key === "arrowleft"
-    const isRight =
-      key === "d" || key === "ㅇ" || keyCode === 39 || key === "arrowright"
-    const isUp =
-      key === "w" || key === "ㅈ" || keyCode === 38 || key === "arrowup"
-    const isDown =
-      key === "s" || key === "ㄴ" || keyCode === 40 || key === "arrowdown"
-    const isK = key === "k" || key === "ㅏ"
-    const isSpace = key === " " || keyCode === 32
+    const isLeft = kc === 65 || kc === 37
+    const isRight = kc === 68 || kc === 39
+    const isUp = kc === 87 || kc === 38
+    const isDown = kc === 83 || kc === 40
+    const isK = kc === 75
+    const isSpace = false // 이미 위에서 처리됨
 
     const findNextWord = (sIdx, wIdx) => {
       let s = sIdx,
@@ -41,7 +46,7 @@ export default function useKeyboardNavigation({
           w = 0
         }
         const word = sentences[s]?.words?.[w]
-        if (word && !word.isDeleted && !isSilenceHidden(word))
+        if (word && !word.is_deleted && !isSilenceHidden(word))
           return { sentenceIdx: s, wordIdx: w, word }
         w++
         iterations++
@@ -63,7 +68,7 @@ export default function useKeyboardNavigation({
           w = (sentences[s]?.words?.length || 1) - 1
         }
         const word = sentences[s]?.words?.[w]
-        if (word && !word.isDeleted && !isSilenceHidden(word))
+        if (word && !word.is_deleted && !isSilenceHidden(word))
           return { sentenceIdx: s, wordIdx: w, word }
         w--
         iterations++
@@ -99,7 +104,7 @@ export default function useKeyboardNavigation({
       let currentLine = []
       let currentY = null
       sentence.words?.forEach((word, idx) => {
-        if (word.isDeleted || isSilenceHidden(word)) return
+        if (word.is_deleted || isSilenceHidden(word)) return
         const el = wordRefs.current[word.start_at]
         if (!el) return
         const y = Math.round(el.getBoundingClientRect().top)
@@ -118,7 +123,7 @@ export default function useKeyboardNavigation({
 
     const findFirstNonDeletedWord = (sentence) => {
       for (let i = 0; i < (sentence.words?.length || 0); i++) {
-        if (!sentence.words[i].isDeleted && !isSilenceHidden(sentence.words[i]))
+        if (!sentence.words[i].is_deleted && !isSilenceHidden(sentence.words[i]))
           return { idx: i, word: sentence.words[i] }
       }
       return null
@@ -217,7 +222,7 @@ export default function useKeyboardNavigation({
       }
       const word =
         sentences[focusedWord.sentenceIdx]?.words?.[focusedWord.wordIdx]
-      if (!word || word.isDeleted) return
+      if (!word || word.is_deleted) return
       const wordId = word.id || word.start_at
       setSelectedWordIds((prev) => {
         const newSet = new Set(prev)
@@ -231,5 +236,5 @@ export default function useKeyboardNavigation({
     }
   }
 
-  return { handleKeyDown }
+  return { handleKeyDown: handleKey }
 }

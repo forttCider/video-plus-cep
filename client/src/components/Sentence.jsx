@@ -28,15 +28,17 @@ const Sentence = forwardRef(
       editingWord = null,
       onStartEditing,
       onWordTextUpdate,
+      onWordEditingEnd,
+      originalSentences,
     },
     ref
   ) => {
     // 문장 재생
     const onClickPlaySentence = async () => {
-      const words = sentence.words.filter((item) => !item.isDeleted);
+      const words = sentence.words.filter((item) => !item.is_deleted);
       if (words.length === 0) return;
 
-      const { start } = getTimelinePosition(words[0], sentences);
+      const { start } = getTimelinePosition(words[0], originalSentences || sentences);
       await setPlayerPosition(start);
       
       // 파형 이동을 위해 첫 단어 focus
@@ -50,15 +52,18 @@ const Sentence = forwardRef(
 
     // 문장의 선택 가능한 단어들 (0n도 유효한 값으로 처리)
     const selectableWords = sentence.words.filter(
-      (w) => !w.isDeleted && !isSilenceHidden(w) && w.start_at_tick !== undefined && w.end_at_tick !== undefined
+      (w) => !w.is_deleted && !isSilenceHidden(w) && w.start_at_tick !== undefined && w.end_at_tick !== undefined
     );
     
     // 문장의 모든 선택 가능한 단어가 선택되었는지 확인
     const allWordsSelected = selectableWords.length > 0 && 
       selectableWords.every((w) => selectedWordIds.has(w.id || w.start_at));
 
+    const spkColors = ["#1a3a2a", "#1a2a3a", "#3a1a2a", "#2a2a1a", "#1a2a2a", "#2a1a3a"];
+    const spkStyle = mode === "subs" ? { borderLeft: "3px solid " + (["#4caf50", "#2196f3", "#f44336", "#ff9800", "#9c27b0", "#00bcd4"][sentence.spk || 0] || "#4caf50"), background: spkColors[sentence.spk || 0] || spkColors[0] } : {};
+
     return (
-      <div className="sentence" ref={ref}>
+      <div className="sentence" ref={ref} style={spkStyle}>
         <div className="sentence-options">
           <div className="sentence-edit">
             {mode === "cut" && (
@@ -94,7 +99,7 @@ const Sentence = forwardRef(
           <div className="sentence-words">
             {sentence.words.map((word, wordIdx) => {
               if (isSilenceHidden(word)) return null;
-              if (mode === "subs" && word.isEdit) return null;
+              if (mode === "subs" && word.is_edit) return null;
               const isSearchMatch = searchResultsSet.has(word.id);
               const isCurrentSearchMatch = currentSearchWordId === word.id;
               const isFocused = focusedWord?.sentenceIdx === sentenceIdx && 
@@ -114,13 +119,13 @@ const Sentence = forwardRef(
                   isCurrentSearchMatch={isCurrentSearchMatch}
                   isEditing={isEditingThis}
                   onClick={(e) => {
-                    if (mode === "subs" && e.detail >= 2 && !word.isDeleted) {
-                      onStartEditing?.(sentenceIdx, wordIdx);
-                      return;
-                    }
                     onWordClick(word);
+                    if (mode === "subs" && e.detail >= 2 && !word.is_deleted) {
+                      onStartEditing?.(sentenceIdx, wordIdx);
+                    }
                   }}
                   onTextUpdate={(newText) => onWordTextUpdate?.(sentenceIdx, wordIdx, newText, word.id)}
+                  onEditingEnd={onWordEditingEnd}
                   mode={mode}
                   ref={(el) => (wordRefs.current[word.start_at] = el)}
                 />

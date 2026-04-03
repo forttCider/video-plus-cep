@@ -13,7 +13,7 @@ export default function useWordSelection({
     sentences.forEach((sentence) => {
       sentence.words?.forEach((word) => {
         if (
-          !word.isDeleted &&
+          !word.is_deleted &&
           word.edit_points?.type === "silence" &&
           word.duration >= silenceThresholdMs &&
           word.start_at_tick !== undefined &&
@@ -31,7 +31,7 @@ export default function useWordSelection({
     sentences.forEach((sentence) => {
       sentence.words?.forEach((word) => {
         if (
-          !word.isDeleted &&
+          !word.is_deleted &&
           FILLER_TYPES.includes(word.edit_points?.type) &&
           word.start_at_tick !== undefined &&
           word.end_at_tick !== undefined

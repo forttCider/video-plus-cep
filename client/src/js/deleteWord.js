@@ -12,7 +12,7 @@ import { getTimelinePositionTick } from "./calculateTimeOffset";
 export async function deleteWordFromTimeline(word, sentences) {
   // 삭제된 단어 수 확인
   const allWords = sentences.flatMap((s) => s.words);
-  const deletedWords = allWords.filter((w) => w.isDeleted);
+  const deletedWords = allWords.filter((w) => w.is_deleted);
   deletedWords.forEach((w, i) => {
   });
   

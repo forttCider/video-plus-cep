@@ -96,7 +96,7 @@ export default function useBatchEdit({
   const handleDeleteSentence = (sentence) => {
     const selectableWords = sentence.words.filter(
       (w) =>
-        !w.isDeleted &&
+        !w.is_deleted &&
         w.start_at_tick !== undefined &&
         w.end_at_tick !== undefined,
     )

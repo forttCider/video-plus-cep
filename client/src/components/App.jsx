@@ -10,6 +10,13 @@ import CutEditControls from "./CutEditControls"
 import SavedStateBanner from "./SavedStateBanner"
 import SentenceList from "./SentenceList"
 import ApplyButton from "./ApplyButton"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "./ui/dialog"
 import BackupHistoryDialog from "./BackupHistoryDialog"
 import RestoreConfirmDialog from "./RestoreConfirmDialog"
 import ProcessingModal from "./ProcessingModal"
@@ -27,6 +34,8 @@ import {
   getSequenceFramerate,
   getProjectDocumentID,
   cloneAndArchiveSequence,
+  exportCaptionsAsSRT,
+  hasCaptionsBin,
 } from "../js/cep-bridge"
 import useAudioUpload from "../hooks/useAudioUpload"
 import useKeyboardNavigation from "../hooks/useKeyboardNavigation"
@@ -35,10 +44,7 @@ import useBatchEdit from "../hooks/useBatchEdit"
 import useBackupRestore from "../hooks/useBackupRestore"
 import usePlaybackTracking from "../hooks/usePlaybackTracking"
 import useStatePersistence from "../hooks/useStatePersistence"
-import initWords, {
-  TICKS_PER_SECOND,
-  secondsToTicksAligned,
-} from "../js/initWords"
+import initWords, { secondsToTicksAligned } from "../js/initWords"
 import WaveformPanel from "./WaveformPanel"
 import {
   getTimelinePositionTick,
@@ -47,6 +53,7 @@ import {
   getOriginalTimeFromTimeline,
   getTimelineTimeFromOriginal,
 } from "../js/calculateTimeOffset"
+import useSubtitleKeyboard from "../hooks/useSubtitleKeyboard"
 
 const API_URL =
   process.env.REACT_APP_VIDEO_API_URL || "https://vapi.cidermics.com"
@@ -75,7 +82,12 @@ export default function App() {
   const [selectedWordIds, setSelectedWordIds] = useState(new Set())
   const [backupList, setBackupList] = useState([])
   const [restoreConfirm, setRestoreConfirm] = useState(null)
-  const [focusedWord, setFocusedWord] = useState(null)
+  const [focusedWord, setFocusedWordState] = useState(null)
+  const focusedWordRef = useRef(null)
+  const setFocusedWord = useCallback((value) => {
+    focusedWordRef.current = value
+    setFocusedWordState(value)
+  }, [])
   const [audioPath, setAudioPath] = useState(null) // 파형 표시용 오디오 경로
   const [silenceSeconds, setSilenceSeconds] = useState("1")
   const [showProcessingModal, setShowProcessingModal] = useState(false)
@@ -88,8 +100,21 @@ export default function App() {
   const [isRestoring, setIsRestoring] = useState(false) // 불러오기 로딩 상태
   const [activeTab, setActiveTab] = useState("cut") // "cut" | "subs"
   const [originalSpkList, setOriginalSpkList] = useState([]) // 원본 화자 목록
-  const [subsMaxWords, setSubsMaxWords] = useState(4) // 자막 최대 단어 수
-  const [editingWord, setEditingWord] = useState(null) // { sentenceIdx, wordIdx }
+  const [subsMaxWords, setSubsMaxWordsState] = useState(4) // 자막 최대 단어 수
+  const subsMaxWordsRef = useRef(4)
+  const setSubsMaxWords = useCallback((val) => {
+    subsMaxWordsRef.current = val
+    setSubsMaxWordsState(val)
+  }, [])
+  const [editingWord, setEditingWordState] = useState(null) // { sentenceIdx, wordIdx }
+  const editingWordRef = useRef(null)
+  const setEditingWord = useCallback((value) => {
+    editingWordRef.current = value
+    setEditingWordState(value)
+  }, [])
+  const [showCaptionConfirm, setShowCaptionConfirm] = useState(false)
+  const [subsSentences, setSubsSentences] = useState([]) // 자막편집 전용 sentences
+  const subsSentencesRef = useRef([])
   const [peaks, setPeaks] = useState(null) // 파형 peaks 데이터
   const [peaksDuration, setPeaksDuration] = useState(null) // peaks 오디오 duration
   const logPanelRef = useRef(null)
@@ -98,6 +123,7 @@ export default function App() {
   const sentencesRef = useRef(sentences)
   const timelineIndexRef = useRef(null)
   const containerRef = useRef(null)
+  const focusTrapRef = useRef(null)
   const currentTimeRef = useRef(0)
   const currentWordIdRef = useRef(null)
   const isPlayingStateRef = useRef(false)
@@ -130,7 +156,7 @@ export default function App() {
   }, [logs, addLog])
 
   // 상태 저장/복원 훅
-  const { saveState, loadState, checkSavedState, isSaving } =
+  const { saveState, saveSubtitleData, loadState, checkSavedState, isSaving } =
     useStatePersistence({
       sequenceInfo,
       sentences,
@@ -164,14 +190,46 @@ export default function App() {
         s.words?.forEach((w) => map.set(w.start_at, sIdx))
       })
       wordSentenceIdxRef.current = map
-      setTimeout(() => containerRef.current?.focus(), 100)
+      setTimeout(() => focusTrapRef.current?.focus(), 100)
+
+      // subsSentences 동기화: 아직 초기화 안 됐으면 splitForSubtitles로 초기화
+      // 이미 있으면 is_deleted/text만 동기화
+      if (subsSentencesRef.current.length === 0) {
+        const subs = splitForSubtitles(sentences, subsMaxWords)
+        setSubsSentences(subs)
+        subsSentencesRef.current = subs
+      } else {
+        // word.id 기준으로 is_deleted 동기화 (원본 상태에 맞춤, text는 자막 편집에서 독립 관리)
+        const wordMap = new Map()
+        sentences.forEach((s) => s.words?.forEach((w) => wordMap.set(w.id, w)))
+        const synced = subsSentencesRef.current.map((s) => ({
+          ...s,
+          words: s.words.map((w) => {
+            const orig = wordMap.get(w.id)
+            if (!orig) return w
+            if (orig.is_deleted !== w.is_deleted) {
+              return { ...w, is_deleted: orig.is_deleted }
+            }
+            return w
+          }),
+        }))
+        setSubsSentences(synced)
+        subsSentencesRef.current = synced
+      }
+    } else {
+      setSubsSentences([])
+      subsSentencesRef.current = []
     }
   }, [sentences])
 
   useEffect(() => {
-    const onKeyDown = (e) => handleKeyDown(e)
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
+    const onKey = (e) => handleKeyDown(e)
+    window.addEventListener("keydown", onKey)
+    window.addEventListener("keyup", onKey)
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      window.removeEventListener("keyup", onKey)
+    }
   }, [focusedWord])
 
   usePlaybackTracking({
@@ -190,8 +248,9 @@ export default function App() {
     wordRefs,
   })
 
+  const navSentencesRef = activeTab === "subs" ? subsSentencesRef : sentencesRef
   const { handleKeyDown } = useKeyboardNavigation({
-    sentencesRef,
+    sentencesRef: navSentencesRef,
     focusedWord,
     setFocusedWord,
     setSelectedWordIds,
@@ -260,10 +319,13 @@ export default function App() {
     }
   }
 
-  const handleWordClick = async (word) => {
+  const handleWordClick = (word) => {
+    if (editingWord) setEditingWord(null)
     let sIdx = -1,
       wIdx = -1
-    sentencesRef.current.forEach((s, si) => {
+    const searchSentences =
+      activeTab === "subs" ? subsSentencesRef.current : sentencesRef.current
+    searchSentences.forEach((s, si) => {
       s.words?.forEach((w, wi) => {
         if (w.start_at === word.start_at) {
           sIdx = si
@@ -273,10 +335,13 @@ export default function App() {
     })
     if (sIdx === -1) return
     setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
-    const result = getTimelinePositionTick(word, sentencesRef.current)
-    if (result?.startTick !== undefined)
-      await setPlayerPositionByTicks(result.startTick.toString())
-    containerRef.current?.focus()
+    focusTrapRef.current?.focus()
+    {
+      const result = getTimelinePositionTick(word, sentencesRef.current)
+      if (result?.startTick !== undefined) {
+        setPlayerPositionByTicks(result.startTick.toString()).catch(() => {})
+      }
+    }
   }
 
   const { handleApplySelected, handleDeleteSentence } = useBatchEdit({
@@ -299,26 +364,101 @@ export default function App() {
     setEditingWord({ sentenceIdx, wordIdx })
   }, [])
 
-  const handleWordTextUpdate = useCallback((sentenceIdx, wordIdx, newText, wordId) => {
-    setEditingWord(null)
-    if (newText === null) return
-    setSentences((prev) =>
-      prev.map((s) => ({
-        ...s,
-        words: s.words.map((w) =>
-          w.id === wordId ? { ...w, text: newText } : w,
-        ),
-      })),
-    )
+  const handleWordTextUpdate = useCallback(
+    (sentenceIdx, wordIdx, newText, wordId) => {
+      setEditingWord(null)
+      focusTrapRef.current?.focus()
+      if (newText === null) return
+      // 자막편집 탭: subsSentences에만 반영 (원본 sentences는 건드리지 않음)
+      setSubsSentences((prev) => {
+        const next = prev.map((s) => ({
+          ...s,
+          words: s.words.map((w) =>
+            w.id === wordId ? { ...w, text: newText } : w,
+          ),
+        }))
+        subsSentencesRef.current = next
+        return next
+      })
+    },
+    [],
+  )
+
+  const handleCaptionClick = useCallback(async () => {
+    const exists = await hasCaptionsBin()
+    if (exists) {
+      setShowCaptionConfirm(true)
+    } else {
+      handleApplyCaptions()
+    }
   }, [])
 
-  const handleChangeSpk = useCallback((sentenceIdx, newSpk) => {
-    setSentences((prev) => {
-      const next = [...prev]
-      next[sentenceIdx] = { ...next[sentenceIdx], spk: newSpk }
-      return next
-    })
-  }, [])
+  const handleApplyCaptions = useCallback(async () => {
+    setShowCaptionConfirm(false)
+    try {
+      setStatus("자막 적용 중...")
+      addLog("info", "캡션 SRT 생성 시작")
+      const result = await exportCaptionsAsSRT(
+        sentencesRef.current,
+        subsSentencesRef.current,
+      )
+      if (result?.success) {
+        setStatus(`캡션 적용 완료: 화자 ${result.speakers}명`)
+        addLog("info", `캡션 적용 완료: ${result.files}개 트랙`)
+        // 자막 편집 데이터 API 저장
+        const spkList = [
+          ...new Set(subsSentencesRef.current.map((s) => s.spk || 0)),
+        ].sort()
+        saveSubtitleData(subsSentencesRef.current, subsMaxWordsRef.current, {
+          count: spkList.length,
+          list: spkList,
+        })
+      } else {
+        setStatus("캡션 적용 실패")
+        addLog(
+          "warn",
+          "캡션 적용 실패: " + (result?.error || "알 수 없는 오류"),
+        )
+      }
+    } catch (e) {
+      setStatus("캡션 적용 실패")
+      addLog("warn", "캡션 적용 오류: " + e.message)
+    }
+  }, [addLog, saveSubtitleData])
+
+  const handleChangeSpk = useCallback(
+    (sentenceIdx, newSpk) => {
+      if (activeTab === "subs") {
+        setSubsSentences((prev) => {
+          const next = [...prev]
+          next[sentenceIdx] = { ...next[sentenceIdx], spk: newSpk }
+          subsSentencesRef.current = next
+          return next
+        })
+      } else {
+        setSentences((prev) => {
+          const next = [...prev]
+          next[sentenceIdx] = { ...next[sentenceIdx], spk: newSpk }
+          return next
+        })
+      }
+    },
+    [activeTab],
+  )
+
+  const {
+    undo: subsUndo,
+    redo: subsRedo,
+    undoStackRef,
+    redoStackRef,
+  } = useSubtitleKeyboard({
+    activeTab,
+    subsSentencesRef,
+    focusedWordRef,
+    setSubsSentences,
+    setFocusedWord,
+    sentencesRef,
+  })
 
   const [isRefreshing, setIsRefreshing] = useState(true)
 
@@ -402,12 +542,11 @@ export default function App() {
           const formattedWord = {
             ...word,
             id: wordId,
-            isDeleted: false,
-            isHighlight: false,
-            parentId: sentenceId,
+            is_deleted: false,
+
+            parent_id: sentenceId,
           }
           if (word.edit_points?.type === "silence") {
-            const fps = Number(TICKS_PER_SECOND) / Number(timebaseRef.current)
             const silenceWord = {
               duration: word.edit_points.duration_ms,
               edit_points: {
@@ -420,14 +559,11 @@ export default function App() {
               start_time: word.edit_points.start_time,
               text: "",
               id: generateRandomId(),
-              parentId: sentenceId,
-              isEdit: true,
+              parent_id: sentenceId,
+              is_edit: true,
               silence_seconds: word.edit_points.silence_seconds,
-              frameCount: Math.round(
-                (word.edit_points.duration_ms / 1000) * fps,
-              ),
-              isDeleted: false,
-              isHighlight: false,
+
+              is_deleted: false,
             }
             formattedWord.edit_points = {}
             return [silenceWord, formattedWord]
@@ -445,15 +581,10 @@ export default function App() {
                 start_time: editPoint.start_time,
                 text: "",
                 id: generateRandomId(),
-                parentId: sentenceId,
-                isEdit: true,
+                parent_id: sentenceId,
+                is_edit: true,
                 silence_seconds: editPoint.silence_seconds,
-                frameCount: Math.round(
-                  ((editPoint.duration_ms / 1000) * Number(TICKS_PER_SECOND)) /
-                    Number(timebaseRef.current),
-                ),
-                isDeleted: false,
-                isHighlight: false,
+                is_deleted: false,
               },
               ...newFormWord,
             ]
@@ -461,7 +592,7 @@ export default function App() {
         return {
           ...sentence,
           id: sentenceId,
-          isDeleted: false,
+          is_deleted: false,
           isHighlight: false,
           words: newWords,
         }
@@ -477,7 +608,7 @@ export default function App() {
       setStatus(`받아쓰기 완료: ${gapSentences.length}개 문장`)
       // 원본 화자 정보 저장
       gapSentences.forEach((s) => {
-        s.originalSpk = s.spk || 0
+        s.original_spk = s.spk || 0
       })
       setOriginalSpkList(
         [...new Set(gapSentences.map((s) => s.spk || 0))].sort(),
@@ -637,11 +768,19 @@ export default function App() {
         setStatus(`복원 완료: ${gapSentences.length}개 문장`)
         addLog("info", "이전 편집 상태 복원됨")
         gapSentences.forEach((s) => {
-          s.originalSpk = s.spk || 0
+          s.original_spk = s.spk || 0
         })
         setOriginalSpkList(
           [...new Set(gapSentences.map((s) => s.spk || 0))].sort(),
         )
+        // 자막 편집 데이터 복원
+        const subtitleData = savedState.subtitleData
+        if (subtitleData) {
+          setSubsSentences(subtitleData.sentences)
+          subsSentencesRef.current = subtitleData.sentences
+          setSubsMaxWords(subtitleData.maxWords || 4)
+          addLog("info", "자막 편집 데이터 복원됨")
+        }
       } else {
         setStatus("복원할 데이터가 없습니다")
       }
@@ -679,7 +818,34 @@ export default function App() {
       className="p-4 h-screen flex flex-col overflow-hidden outline-none"
       ref={containerRef}
       tabIndex={0}
+      onMouseDown={(e) => {
+        if (
+          e.target.tagName !== "INPUT" &&
+          e.target.tagName !== "TEXTAREA" &&
+          e.target.tagName !== "SELECT"
+        ) {
+          focusTrapRef.current?.focus()
+        }
+      }}
     >
+      {/* CEP 키보드 포커스 홀더: input이 포커스돼야 Premiere Pro가 키보드를 패널에 넘겨줌 */}
+      <input
+        ref={focusTrapRef}
+        data-focus-trap="true"
+        readOnly
+        style={{
+          position: "fixed",
+          opacity: 0,
+          pointerEvents: "none",
+          width: 1,
+          height: 1,
+          top: -10,
+          left: -10,
+          border: "none",
+          outline: "none",
+          padding: 0,
+        }}
+      />
       {/* 초기화 로딩 오버레이 */}
       {isInitializing && (
         <div className="fixed inset-0 bg-background z-50 flex flex-col items-center justify-center">
@@ -692,6 +858,10 @@ export default function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onOpenHistory={handleOpenHistory}
+        onUndo={subsUndo}
+        onRedo={subsRedo}
+        canUndo={undoStackRef.current.length > 0}
+        canRedo={redoStackRef.current.length > 0}
         sequenceInfo={sequenceInfo}
         isRefreshing={isRefreshing}
         onRefresh={loadSequenceInfo}
@@ -789,59 +959,103 @@ export default function App() {
       {/* 탭 내용: 자막편집 */}
       {sentences.length > 0 && activeTab === "subs" && (
         <>
-          <div className="flex items-center justify-between mb-2 px-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-muted-foreground">
-                화자 {originalSpkList.length}명 감지
-              </span>
-              <span className="text-xs text-muted-foreground">|</span>
-              {originalSpkList.map((fromSpk) => (
-                <div key={fromSpk} className="flex items-center gap-1">
-                  <span className="text-xs text-muted-foreground">
-                    화자 {fromSpk + 1} →
-                  </span>
-                  <select
-                    className="spk-select"
-                    value={(() => {
-                      const matched = sentences.find(
-                        (s) => s.originalSpk === fromSpk,
-                      )
-                      return matched ? matched.spk || 0 : fromSpk
-                    })()}
-                    onChange={(e) => {
-                      const toSpk = parseInt(e.target.value, 10)
-                      if (!isNaN(toSpk)) {
-                        setSentences((prev) =>
-                          prev.map((s) =>
-                            s.originalSpk === fromSpk ? { ...s, spk: toSpk } : s,
-                          ),
-                        )
-                      }
-                    }}
-                  >
-                    {originalSpkList.map((spk) => (
-                      <option key={spk} value={spk}>
-                        {spk + 1}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-1 flex-shrink-0">
-              <span className="text-xs text-muted-foreground">단어: {subsMaxWords}</span>
-              <input
-                type="range"
-                min={2}
-                max={8}
-                value={subsMaxWords}
-                onChange={(e) => setSubsMaxWords(parseInt(e.target.value, 10))}
-                className="w-16 h-1 accent-primary"
-              />
+          <div className="rounded-lg border border-border bg-card/50 p-2 mb-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-medium text-muted-foreground">
+                  화자 {originalSpkList.length}명
+                </span>
+                {originalSpkList.map((fromSpk) => {
+                  const spkColors = [
+                    "#4caf50",
+                    "#2196f3",
+                    "#f44336",
+                    "#ff9800",
+                    "#9c27b0",
+                    "#00bcd4",
+                  ]
+                  const color = spkColors[fromSpk] || spkColors[0]
+                  return (
+                    <div key={fromSpk} className="flex items-center gap-1.5">
+                      <span
+                        className="inline-block w-2.5 h-2.5 rounded-full"
+                        style={{ background: color }}
+                      />
+                      <select
+                        className="bg-transparent text-xs border border-border rounded px-1.5 py-0.5 outline-none cursor-pointer"
+                        style={{ color }}
+                        value={(() => {
+                          const matched = sentences.find(
+                            (s) => s.original_spk === fromSpk,
+                          )
+                          return matched ? matched.spk || 0 : fromSpk
+                        })()}
+                        onChange={(e) => {
+                          const toSpk = parseInt(e.target.value, 10)
+                          if (!isNaN(toSpk)) {
+                            setSentences((prev) =>
+                              prev.map((s) =>
+                                s.original_spk === fromSpk
+                                  ? { ...s, spk: toSpk }
+                                  : s,
+                              ),
+                            )
+                            setSubsSentences((prev) => {
+                              const next = prev.map((s) =>
+                                s.original_spk === fromSpk
+                                  ? { ...s, spk: toSpk }
+                                  : s,
+                              )
+                              subsSentencesRef.current = next
+                              return next
+                            })
+                          }
+                        }}
+                      >
+                        {originalSpkList.map((spk) => (
+                          <option
+                            key={spk}
+                            value={spk}
+                            style={{ background: "#1e1e1e", color: "#fff" }}
+                          >
+                            화자 {spk + 1}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )
+                })}
+              </div>
+              <div
+                className="flex items-center gap-2"
+                style={{ minWidth: 120 }}
+              >
+                <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                  {subsMaxWords}단어
+                </span>
+                <input
+                  type="range"
+                  min={2}
+                  max={8}
+                  value={subsMaxWords}
+                  className="word-count-slider"
+                  style={{ flex: 1 }}
+                  onChange={(e) => {
+                    setSubsMaxWords(parseInt(e.target.value, 10))
+                  }}
+                  onMouseUp={(e) => {
+                    const val = parseInt(e.target.value, 10)
+                    const subs = splitForSubtitles(sentences, val)
+                    setSubsSentences(subs)
+                    subsSentencesRef.current = subs
+                  }}
+                />
+              </div>
             </div>
           </div>
           <SentenceList
-            sentences={splitForSubtitles(sentences, subsMaxWords)}
+            sentences={subsSentences}
+            originalSentences={sentences}
             mode="subs"
             focusedWord={focusedWord}
             currentWordId={currentWordId}
@@ -858,10 +1072,23 @@ export default function App() {
             }
             isUpload={isUpload}
             onChangeSpk={handleChangeSpk}
+            spkList={[...new Set(subsSentences.map((s) => s.spk || 0))].sort()}
             editingWord={editingWord}
             onStartEditing={handleStartEditing}
             onWordTextUpdate={handleWordTextUpdate}
+            onWordEditingEnd={() => {
+              setEditingWord(null)
+            }}
           />
+          <div className="flex justify-end mt-2">
+            <Button
+              size="sm"
+              onClick={handleCaptionClick}
+              disabled={!isConnected || subsSentences.length === 0}
+            >
+              시퀀스에 자막 적용
+            </Button>
+          </div>
         </>
       )}
 
@@ -878,6 +1105,32 @@ export default function App() {
         onCancel={() => setRestoreConfirm(null)}
       />
 
+      <Dialog
+        open={showCaptionConfirm}
+        onOpenChange={() => setShowCaptionConfirm(false)}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>기존 캡션이 있습니다</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            시퀀스에 이미 적용된 캡션 트랙은 자동으로 삭제되지 않습니다.
+            <br />
+            기존 캡션 트랙을 시퀀스에서 직접 삭제한 후 적용하시는 것을
+            권장합니다.
+          </p>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => setShowCaptionConfirm(false)}
+            >
+              취소
+            </Button>
+            <Button onClick={handleApplyCaptions}>그래도 적용</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <ProcessingModal
         open={showProcessingModal}
         batchProgress={batchProgress}
@@ -890,7 +1143,7 @@ export default function App() {
       />
 
       {/* 하단 파형 패널 (컷편집만) */}
-      {activeTab === "cut" && sentences.length === 0 && (
+      {activeTab === "cut" && sentences.length > 0 && (
         <WaveformPanel
           key={`${audioPath || "no-audio"}-${peaks ? peaks.length : 0}`}
           audioPath={audioPath}

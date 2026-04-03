@@ -21,7 +21,7 @@ function isOverlapping(word, allWords) {
     // 자기 자신은 스킵
     if ((other.id || other.start_at) === (word.id || word.start_at)) continue
     // 이미 삭제된 단어는 스킵
-    if (other.isDeleted) continue
+    if (other.is_deleted) continue
 
     const otherStart = other.start_at
     const otherEnd = other.end_at
@@ -63,7 +63,7 @@ function groupConsecutiveWords(selectedWords, allWords) {
     const hasActiveWordBetween = sortedAll.some((w) => {
       const wId = w.id || w.start_at
       if (selectedIds.has(wId)) return false
-      if (w.isDeleted) return false
+      if (w.is_deleted) return false
       // prev.end_at ~ curr.start_at 사이에 있는 단어
       return w.start_at >= prev.end_at && w.end_at <= curr.start_at
     })
@@ -84,10 +84,10 @@ function groupConsecutiveWords(selectedWords, allWords) {
 }
 
 /**
- * 그룹 내 각 단어의 gapAfterTick 계산
+ * 그룹 내 각 단어의 gap_after_tick 계산
  * (다음 단어 start_at_tick - 현재 단어 end_at_tick)
  * @param {Array<Array>} groups - 그룹 배열
- * @returns {Map<any, BigInt>} wordId → gapAfterTick
+ * @returns {Map<any, BigInt>} wordId → gap_after_tick
  */
 function calculateGroupGaps(groups) {
   const wordGaps = new Map()
@@ -209,7 +209,7 @@ export async function batchDeleteWords(filterFn, sentences, onProgress, addLog, 
         currentSentences = currentSentences.map((s) => ({
           ...s,
           words: s.words.map((w) =>
-            groupIds.has(w.id || w.start_at) ? { ...w, isDeleted: true } : w
+            groupIds.has(w.id || w.start_at) ? { ...w, is_deleted: true } : w
           ),
         }))
       } else {
@@ -240,7 +240,7 @@ export async function batchDeleteWords(filterFn, sentences, onProgress, addLog, 
  * 삭제 결과를 sentences 상태에 적용
  * @param {Array} sentences
  * @param {Set} deletedWordIds
- * @param {Map|null} wordGaps - wordId → gapAfterTick (BigInt)
+ * @param {Map|null} wordGaps - wordId → gap_after_tick (BigInt)
  */
 export function applyDeleteResult(sentences, deletedWordIds, wordGaps = null) {
   return sentences.map((s) => {
@@ -248,16 +248,16 @@ export function applyDeleteResult(sentences, deletedWordIds, wordGaps = null) {
       const wordId = w.id || w.start_at
       if (!deletedWordIds.has(wordId)) return w
 
-      const updates = { ...w, isDeleted: true }
+      const updates = { ...w, is_deleted: true }
       if (wordGaps && wordGaps.has(wordId)) {
-        updates.gapAfterTick = wordGaps.get(wordId)
+        updates.gap_after_tick = wordGaps.get(wordId)
       }
       return updates
     })
-    const allDeleted = updatedWords.every((w) => w.isDeleted)
+    const allDeleted = updatedWords.every((w) => w.is_deleted)
     return {
       ...s,
-      isDeleted: allDeleted ? true : s.isDeleted,
+      is_deleted: allDeleted ? true : s.is_deleted,
       words: updatedWords,
     }
   })

@@ -39,29 +39,52 @@ export function secondsToTicksAligned(seconds, ticksPerFrame) {
  * @returns {Array} - BigInt tick 필드가 추가된 문장 배열
  */
 export function restoreWords(sentences) {
-  return sentences.map((sentence) => ({
-    ...sentence,
-    words: sentence.words?.map((word) => {
+  return sentences.map((sentence) => {
+    // sentence 레벨 camelCase 마이그레이션
+    const s = { ...sentence }
+    if (s.isDeleted !== undefined && s.is_deleted === undefined) { s.is_deleted = s.isDeleted; delete s.isDeleted }
+    if (s.originalSpk !== undefined && s.original_spk === undefined) { s.original_spk = s.originalSpk; delete s.originalSpk }
+    return {
+    ...s,
+    words: s.words?.map((word) => {
       const restored = {
         ...word,
         start_at_sec: word.start_at / 1000,
         end_at_sec: word.end_at / 1000,
       }
+      // camelCase → snake_case 마이그레이션 (이전 저장 데이터 호환)
+      const camelToSnake = {
+        isDeleted: "is_deleted",
+        isEdit: "is_edit",
+        parentId: "parent_id",
+        firstGapTick: "first_gap_tick",
+        secondGapTick: "second_gap_tick",
+        firstClipOutPointTick: "first_clip_out_point_tick",
+        secondClipInPointTick: "second_clip_in_point_tick",
+        gapAfterTick: "gap_after_tick",
+      }
+      for (const [camel, snake] of Object.entries(camelToSnake)) {
+        if (word[camel] !== undefined && restored[snake] === undefined) {
+          restored[snake] = word[camel]
+          delete restored[camel]
+        }
+      }
       // 저장된 String 값을 BigInt로 복원
       const bigIntFields = [
         "start_at_tick", "end_at_tick",
-        "firstGapTick", "secondGapTick",
-        "firstClipOutPointTick", "secondClipInPointTick",
-        "gapAfterTick",
+        "first_gap_tick", "second_gap_tick",
+        "first_clip_out_point_tick", "second_clip_in_point_tick",
+        "gap_after_tick",
       ]
       for (const field of bigIntFields) {
-        if (word[field] != null) {
-          restored[field] = BigInt(word[field])
+        if (restored[field] != null) {
+          restored[field] = BigInt(restored[field])
         }
       }
       return restored
     }),
-  }))
+  }
+  })
 }
 
 export default async function initWords(sentences) {
@@ -143,9 +166,7 @@ export default async function initWords(sentences) {
             end_at_tick: endTick,
             start_at_sec: item.start_at / 1000,
             end_at_sec: item.end_at / 1000,
-            isOverlapped: false,
-            firstGap: containingClip.accumulatedGap,
-            firstGapTick: containingClip.accumulatedGapTick,
+            first_gap_tick: containingClip.accumulatedGapTick,
           };
         } else {
           // 겹친 단어 - 두 클립에 걸침
@@ -162,13 +183,10 @@ export default async function initWords(sentences) {
             end_at_tick: endTick,
             start_at_sec: item.start_at / 1000,
             end_at_sec: item.end_at / 1000,
-            isOverlapped: true,
-            firstGap: firstClip?.accumulatedGap || 0,
-            firstGapTick: firstClip?.accumulatedGapTick || 0n,
-            secondGap: secondClip?.accumulatedGap || 0,
-            secondGapTick: secondClip?.accumulatedGapTick || 0n,
-            firstClipOutPointTick: firstClip?.outPointTick,
-            secondClipInPointTick: secondClip?.inPointTick,
+            first_gap_tick: firstClip?.accumulatedGapTick || 0n,
+            second_gap_tick: secondClip?.accumulatedGapTick || 0n,
+            first_clip_out_point_tick: firstClip?.outPointTick,
+            second_clip_in_point_tick: secondClip?.inPointTick,
           };
         }
       });

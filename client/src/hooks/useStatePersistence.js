@@ -4,10 +4,12 @@
  * 시퀀스 열림 시 저장 기록 확인 및 복원
  */
 import { useState, useRef, useCallback } from "react"
-import { getProjectDocumentID } from "../js/cep-bridge"
+import { getProjectDocumentID, getActiveSequenceInfo } from "../js/cep-bridge"
 import {
   prepareStateForSave,
   restoreStateFromData,
+  prepareSubtitleDataForSave,
+  restoreSubtitleData,
 } from "../js/stateSerializer"
 
 const API_URL =
@@ -116,7 +118,10 @@ export default function useStatePersistence({
         const cutPoints = data.cut_points || data
         const audioPath = data.audio_filepath || null
         const waveform = data.waveform || null
-        return { ...restoreStateFromData(cutPoints, audioPath), waveform }
+        // API 응답: data.subtitle = { project_id, sequence_id, subtitle: { max_words, speakers, sentences } }
+        const subtitleRaw = data.subtitle?.subtitle || data.subtitle
+        const subtitleData = subtitleRaw?.sentences ? restoreSubtitleData(subtitleRaw) : null
+        return { ...restoreStateFromData(cutPoints, audioPath), waveform, subtitleData }
       } catch (e) {
         addLog("warn", "상태 불러오기 실패: " + e.message)
         return null
@@ -125,6 +130,39 @@ export default function useStatePersistence({
       }
     },
     [sequenceInfo, addLog],
+  )
+
+  /**
+   * 자막 편집 데이터를 API에 저장
+   */
+  const saveSubtitleData = useCallback(
+    async (subsSentences, maxWords, speakers) => {
+      try {
+        const documentID = await getProjectDocumentID()
+        const currentSeq = await getActiveSequenceInfo()
+        const seqId = currentSeq?.id
+        if (!documentID || !seqId) return
+
+        const subtitleData = prepareSubtitleDataForSave(subsSentences, maxWords, speakers)
+        const payload = {
+          project_id: documentID,
+          sequence_id: seqId,
+          subtitle: subtitleData,
+        }
+
+        const response = await fetch(`${API_URL}/transcribe/subtitle`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+
+        if (!response.ok) throw new Error(`자막 저장 실패: ${response.status}`)
+        addLog("info", "자막 편집 데이터 저장됨")
+      } catch (e) {
+        addLog("warn", "자막 저장 실패: " + e.message)
+      }
+    },
+    [addLog],
   )
 
   /**
@@ -151,6 +189,7 @@ export default function useStatePersistence({
 
   return {
     saveState,
+    saveSubtitleData,
     loadState,
     checkSavedState,
     isSaving,
