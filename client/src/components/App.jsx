@@ -36,6 +36,7 @@ import {
   cloneAndArchiveSequence,
   exportCaptionsAsSRT,
   hasCaptionsBin,
+  getExtensionVersion,
 } from "../js/cep-bridge"
 import useAudioUpload from "../hooks/useAudioUpload"
 import useKeyboardNavigation from "../hooks/useKeyboardNavigation"
@@ -866,6 +867,7 @@ export default function App() {
         isRefreshing={isRefreshing}
         onRefresh={loadSequenceInfo}
         status={status}
+        version={getExtensionVersion()}
       />
 
       <LogPanel

@@ -15,6 +15,7 @@ export default function AppHeader({
   isRefreshing,
   onRefresh,
   status,
+  version,
 }) {
   return (
     <div className="mb-2">
@@ -44,6 +45,11 @@ export default function AppHeader({
         </div>
 
         <div className="flex items-center gap-1">
+          {version && (
+            <Badge variant="outline" className="text-[10px] bg-white text-black border-white">
+              v{version}
+            </Badge>
+          )}
           <Badge
             variant={
               sequenceInfo
