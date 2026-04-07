@@ -15,7 +15,13 @@ const API_URL =
   process.env.REACT_APP_VIDEO_API_URL || "https://vapi.cidermics.com"
 const CHUNK_SIZE = 64 * 1024 * 1024 // 64MB
 
-export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
+export default function useAudioUpload({
+  onFinish,
+  onClose,
+  onStart,
+  addLog,
+  numSpeakersRef,
+}) {
   const [isUpload, setIsUpload] = useState(false)
   const [isCanceled, setIsCanceled] = useState(false)
   const [isError, setIsError] = useState(false)
@@ -59,7 +65,7 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
     })
 
     // 🔥 onStart 콜백 호출 (시퀀스 백업 + clone + 초기화)
-    onStart && await onStart()
+    onStart && (await onStart())
     addLog && addLog("info", "오디오 렌더링 시작...")
 
     try {
@@ -105,12 +111,17 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
         body: JSON.stringify({
           filename: "audio.wav",
           file_size: arrayBuffer.byteLength,
+          num_speakers: numSpeakersRef?.current || 2,
         }),
       })
 
       if (!response.ok) {
         const error = await response.json()
-        addLog && addLog("error", "서버 응답 오류: " + (error.detail || response.status))
+        addLog &&
+          addLog(
+            "error",
+            "서버 응답 오류: " + (error.detail || response.status),
+          )
         isErrorRef.current = true
         setIsError(true)
         setIsUpload(false)
@@ -127,7 +138,13 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
       )
 
       // 청크 업로드 시작
-      uploadChunks(resData.total_chunks, arrayBuffer, resData.task_id, documentID, seqInfo?.id)
+      uploadChunks(
+        resData.total_chunks,
+        arrayBuffer,
+        resData.task_id,
+        documentID,
+        seqInfo?.id,
+      )
 
       // 상태 폴링 시작
       startPolling(resData.task_id)
@@ -144,7 +161,13 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
   }
 
   // 청크 업로드
-  const uploadChunks = async (totalChunks, arrayBuffer, taskId, projectId, sequenceId) => {
+  const uploadChunks = async (
+    totalChunks,
+    arrayBuffer,
+    taskId,
+    projectId,
+    sequenceId,
+  ) => {
     for (let i = 0; i < totalChunks; i++) {
       if (isCanceledRef.current || isErrorRef.current) break
 
@@ -153,7 +176,13 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
       const chunkBuffer = arrayBuffer.slice(start, end)
       const chunkBlob = new Blob([chunkBuffer], { type: "audio/wav" })
 
-      const success = await uploadSingleChunk(i, chunkBlob, taskId, projectId, sequenceId)
+      const success = await uploadSingleChunk(
+        i,
+        chunkBlob,
+        taskId,
+        projectId,
+        sequenceId,
+      )
       if (!success) {
         clearInterval(intervalRef.current)
         break
@@ -162,7 +191,13 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
   }
 
   // 단일 청크 업로드
-  const uploadSingleChunk = async (chunkIndex, chunk, taskId, projectId, sequenceId) => {
+  const uploadSingleChunk = async (
+    chunkIndex,
+    chunk,
+    taskId,
+    projectId,
+    sequenceId,
+  ) => {
     if (isCanceledRef.current || isErrorRef.current) return false
 
     try {
@@ -172,6 +207,8 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
       formData.append("chunk", chunk, `chunk_${chunkIndex}.bin`)
       if (projectId) formData.append("project_id", projectId)
       if (sequenceId) formData.append("sequence_id", sequenceId)
+      if (numSpeakersRef?.current)
+        formData.append("spk_count", String(numSpeakersRef.current))
 
       const response = await fetch(`${API_URL}/transcribe`, {
         method: "POST",
@@ -181,7 +218,8 @@ export default function useAudioUpload({ onFinish, onClose, onStart, addLog }) {
 
       if (!response.ok) {
         const error = await response.json()
-        addLog && addLog("error", "업로드 실패: " + (error.detail || response.status))
+        addLog &&
+          addLog("error", "업로드 실패: " + (error.detail || response.status))
         isErrorRef.current = true
         setIsError(true)
         setIsUpload(false)

@@ -6,7 +6,7 @@ export default function BatchProgress({ batchProgress }) {
   if (!batchProgress) return null
 
   return (
-    <Card className="mb-3">
+    <Card className="mt-3 mb-3">
       <CardContent className="py-3 px-3">
         <div className="flex justify-between mb-2 text-sm">
           <span>{batchProgress.label}</span>

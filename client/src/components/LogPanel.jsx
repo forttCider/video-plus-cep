@@ -1,15 +1,13 @@
-import React from "react"
 import { ClipboardCopy, X } from "lucide-react"
 import { Button } from "./ui/button"
-import { Card } from "./ui/card"
 
 export default function LogPanel({ logs, onCopy, onClear, logPanelRef }) {
   if (logs.length === 0) return null
 
   return (
-    <Card className="mb-3 flex-shrink-0">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border">
-        <span className="text-xs text-muted-foreground font-mono">
+    <div className="flex-shrink-0">
+      <div className="flex items-center justify-between py-1.5 px-4 border-b border-border" style={{ background: "rgba(255,255,255,0.03)" }}>
+        <span className="text-xs text-muted-foreground/40">
           로그 ({logs.length})
         </span>
         <div className="flex gap-1">
@@ -35,7 +33,7 @@ export default function LogPanel({ logs, onCopy, onClear, logPanelRef }) {
       </div>
       <div
         ref={logPanelRef}
-        className="h-[100px] overflow-y-auto p-2 font-mono text-[11px]"
+        className="h-[70px] overflow-y-auto px-4 py-2 font-mono text-[11px] border-b border-border"
       >
         {logs.map((log, i) => (
           <div
@@ -59,6 +57,6 @@ export default function LogPanel({ logs, onCopy, onClear, logPanelRef }) {
           </div>
         ))}
       </div>
-    </Card>
+    </div>
   )
 }

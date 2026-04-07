@@ -7,7 +7,7 @@ export default function UploadProgress({ isUpload, uploadFile, onCancel }) {
   if (!isUpload || !uploadFile) return null
 
   return (
-    <Card className="mb-3">
+    <Card className="mb-3 shadow-lg">
       <CardContent className="py-3 px-3">
         <div className="flex justify-between mb-2 text-sm">
           <span>{uploadFile.message}</span>

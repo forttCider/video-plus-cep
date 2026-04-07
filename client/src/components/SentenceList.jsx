@@ -1,5 +1,5 @@
 import React from "react"
-import { Card, CardContent } from "./ui/card"
+
 import Sentence from "./Sentence"
 
 export default function SentenceList({
@@ -26,8 +26,7 @@ export default function SentenceList({
   originalSentences,
 }) {
   return (
-    <Card className="flex-1 overflow-hidden">
-      <CardContent className="p-3 overflow-y-auto h-full">
+    <div className="flex-1 overflow-y-auto">
         {isUpload ? (
           <div className="text-muted-foreground text-center py-8">
             <div className="animate-pulse">
@@ -69,7 +68,6 @@ export default function SentenceList({
             소스클립을 받아쓰지 않았습니다
           </p>
         )}
-      </CardContent>
-    </Card>
+    </div>
   )
 }

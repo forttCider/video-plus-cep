@@ -121,7 +121,9 @@ export default function useStatePersistence({
         // API 응답: data.subtitle = { project_id, sequence_id, subtitle: { max_words, speakers, sentences } }
         const subtitleRaw = data.subtitle?.subtitle || data.subtitle
         const subtitleData = subtitleRaw?.sentences ? restoreSubtitleData(subtitleRaw) : null
-        return { ...restoreStateFromData(cutPoints, audioPath), waveform, subtitleData }
+        const taskId = data.task_id || cutPoints.task_id || null
+        const summaryData = data.summary || null
+        return { ...restoreStateFromData(cutPoints, audioPath), waveform, subtitleData, taskId, summaryData }
       } catch (e) {
         addLog("warn", "상태 불러오기 실패: " + e.message)
         return null

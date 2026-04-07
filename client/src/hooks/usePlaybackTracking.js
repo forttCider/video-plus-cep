@@ -16,6 +16,8 @@ export default function usePlaybackTracking({
   setIsPlayingState,
   timelineIndexRef,
   wordRefs,
+  subsWordRefs,
+  activeTabRef,
 }) {
   // 재생 위치 폴링
   useEffect(() => {
@@ -51,6 +53,12 @@ export default function usePlaybackTracking({
               const sIdx =
                 wordSentenceIdxRef.current.get(found.word.start_at) ?? null
               setCurrentWordSentenceIdx(sIdx)
+              // 현재 단어로 스크롤 (활성 탭에 따라 적절한 ref 사용)
+              const refs = activeTabRef?.current === "subs" ? subsWordRefs : wordRefs
+              refs.current[found.word.start_at]?.scrollIntoView({
+                behavior: "instant",
+                block: "center",
+              })
             }
           }
         }
@@ -59,12 +67,4 @@ export default function usePlaybackTracking({
     return () => clearInterval(pollInterval)
   }, [isConnected, sentencesLength, isProcessing])
 
-  // 현재 단어로 스크롤
-  useEffect(() => {
-    if (!currentWordIdRef.current || !wordRefs.current[currentWordIdRef.current]) return
-    wordRefs.current[currentWordIdRef.current].scrollIntoView({
-      behavior: "instant",
-      block: "center",
-    })
-  }, [currentWordIdRef.current])
 }

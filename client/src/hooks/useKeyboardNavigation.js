@@ -9,15 +9,16 @@ export default function useKeyboardNavigation({
   isSilenceHidden,
 }) {
   const handleKey = (e) => {
-    if (!sentencesRef.current || sentencesRef.current.length === 0) return
     if ((e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") && !e.target.dataset.focusTrap) return
     const kc = e.keyCode
 
-    // Space: keydown에서 처리 (preventDefault로 스크롤 방지)
+    // Space: keydown에서 처리 (preventDefault로 스크롤 방지) - sentences 없어도 동작
     if (e.type === "keydown") {
       if (kc === 32) { e.preventDefault(); togglePlayback().catch(() => {}); }
       return
     }
+
+    if (!sentencesRef.current || sentencesRef.current.length === 0) return
 
     // keyup에서 나머지 처리 (WASD, 화살표, K - 한국어 IME 229 우회)
     if (kc === 229) return

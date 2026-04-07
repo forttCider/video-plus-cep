@@ -1,9 +1,12 @@
 import React, { forwardRef } from "react";
-import { Scissors, Undo2, Mic, Play } from "lucide-react";
+import { Scissors, Undo2, Play } from "lucide-react";
 import Word from "./Word";
 import "./css/Sentence.css";
 import { getTimelinePosition } from "../js/calculateTimeOffset";
 import { setPlayerPosition } from "../js/cep-bridge";
+
+const spkBadgeColors = ["#4caf50", "#2196f3", "#f44336", "#ff9800", "#9c27b0", "#00bcd4"];
+const spkLabels = ["A", "B", "C", "D", "E", "F"];
 
 const Sentence = forwardRef(
   (
@@ -33,76 +36,85 @@ const Sentence = forwardRef(
     },
     ref
   ) => {
-    // 문장 재생
     const onClickPlaySentence = async () => {
       const words = sentence.words.filter((item) => !item.is_deleted);
       if (words.length === 0) return;
-
       const { start } = getTimelinePosition(words[0], originalSentences || sentences);
       await setPlayerPosition(start);
-      
-      // 파형 이동을 위해 첫 단어 focus
-      if (onSentencePlay) {
-        onSentencePlay(sentenceIdx, 0);
-      }
+      if (onSentencePlay) onSentencePlay(sentenceIdx, 0);
     };
 
     const isSilenceHidden = (w) =>
       w.edit_points?.type === "silence" && w.duration < silenceThresholdMs;
 
-    // 문장의 선택 가능한 단어들 (0n도 유효한 값으로 처리)
     const selectableWords = sentence.words.filter(
       (w) => !w.is_deleted && !isSilenceHidden(w) && w.start_at_tick !== undefined && w.end_at_tick !== undefined
     );
-    
-    // 문장의 모든 선택 가능한 단어가 선택되었는지 확인
-    const allWordsSelected = selectableWords.length > 0 && 
+    const allWordsSelected = selectableWords.length > 0 &&
       selectableWords.every((w) => selectedWordIds.has(w.id || w.start_at));
 
-    const spkColors = ["#1a3a2a", "#1a2a3a", "#3a1a2a", "#2a2a1a", "#1a2a2a", "#2a1a3a"];
-    const spkStyle = mode === "subs" ? { borderLeft: "3px solid " + (["#4caf50", "#2196f3", "#f44336", "#ff9800", "#9c27b0", "#00bcd4"][sentence.spk || 0] || "#4caf50"), background: spkColors[sentence.spk || 0] || spkColors[0] } : {};
+    const spk = sentence.spk || 0;
+    const badgeColor = spkBadgeColors[spk] || spkBadgeColors[0];
+    const badgeLabel = spkLabels[spk] || String(spk);
+
+    const spkStyle = {
+      borderLeft: "3px solid " + badgeColor,
+    };
 
     return (
       <div className="sentence" ref={ref} style={spkStyle}>
-        <div className="sentence-options">
-          <div className="sentence-edit">
-            {mode === "cut" && (
-              <p
-                className={`sentence-cut ${allWordsSelected ? 'selected' : ''}`}
-                onClick={() => onDeleteSentence(sentence)}
-                title={allWordsSelected ? "선택 해제" : "선택 추가"}
+        {/* 왼쪽: 가위/재생 */}
+        <div className="sentence-actions">
+          {mode === "cut" && (
+            <button
+              className={`sentence-action-btn ${allWordsSelected ? "selected" : ""}`}
+              onClick={() => onDeleteSentence(sentence)}
+              title={allWordsSelected ? "선택 해제" : "선택 추가"}
+            >
+              {allWordsSelected ? <Undo2 size={14} /> : <Scissors size={14} />}
+            </button>
+          )}
+          <button className="sentence-action-btn" onClick={onClickPlaySentence}>
+            <Play size={14} />
+          </button>
+        </div>
+
+        {/* 오른쪽: 내용 */}
+        <div className="sentence-content">
+          {/* 상단: 화자뱃지 + 시간 + 화자 select */}
+          <div className="sentence-header">
+            <div className="sentence-header-left">
+              <span
+                className="sentence-spk-badge"
+                style={{ background: badgeColor }}
               >
-                {allWordsSelected ? <Undo2 size={14} /> : <Scissors size={14} />}
-              </p>
-            )}
-            <p className="sentence-play" onClick={onClickPlaySentence}>
-              <Play size={14} />
-            </p>
-          </div>
-          <div className="sentence-spk">
-            <Mic size={12} />
+                {badgeLabel}
+              </span>
+              <span className="sentence-time">
+                {sentence.start_time} — {sentence.end_time}
+              </span>
+            </div>
             <select
-              className="spk-select"
-              value={sentence.spk || 0}
+              className="sentence-spk-select"
+              value={spk}
               onChange={(e) => onChangeSpk?.(sentenceIdx, parseInt(e.target.value, 10))}
             >
-              {spkList.map((spk) => (
-                <option key={spk} value={spk}>{spk + 1}</option>
+              {spkList.map((s) => (
+                <option key={s} value={s} style={{ background: "#1e1e1e", color: "#fff" }}>
+                  화자 {spkLabels[s] || s + 1}
+                </option>
               ))}
             </select>
           </div>
-        </div>
-        <div className="sentence-info">
-          <p>
-            {sentence.start_time} - {sentence.end_time}
-          </p>
+
+          {/* 하단: 단어들 */}
           <div className="sentence-words">
             {sentence.words.map((word, wordIdx) => {
               if (isSilenceHidden(word)) return null;
               if (mode === "subs" && word.is_edit) return null;
               const isSearchMatch = searchResultsSet.has(word.id);
               const isCurrentSearchMatch = currentSearchWordId === word.id;
-              const isFocused = focusedWord?.sentenceIdx === sentenceIdx && 
+              const isFocused = focusedWord?.sentenceIdx === sentenceIdx &&
                                focusedWord?.wordIdx === wordIdx;
               const wordId = word.id || word.start_at;
               const isSelected = mode === "cut" && selectedWordIds.has(wordId);
@@ -138,48 +150,15 @@ const Sentence = forwardRef(
   }
 );
 
+Sentence.displayName = "Sentence";
+
 export default React.memo(Sentence, (prevProps, nextProps) => {
-  // 같은 sentence 참조면 내부 변경 없음
-  if (prevProps.sentence !== nextProps.sentence) return false;
-
-  // focusedWord가 이 문장에 해당하는지 확인
-  const prevHasFocus = prevProps.focusedWord?.sentenceIdx === prevProps.sentenceIdx;
-  const nextHasFocus = nextProps.focusedWord?.sentenceIdx === nextProps.sentenceIdx;
-  if (prevHasFocus !== nextHasFocus) return false;
-  if (prevHasFocus && prevProps.focusedWord?.wordIdx !== nextProps.focusedWord?.wordIdx)
-    return false;
-
-  // currentWordId가 이 문장의 단어에 해당하는지 확인 (O(1) 비교)
-  const prevHasCurrentWord = prevProps.sentenceIdx === prevProps.currentWordSentenceIdx;
-  const nextHasCurrentWord = nextProps.sentenceIdx === nextProps.currentWordSentenceIdx;
-  if (prevHasCurrentWord !== nextHasCurrentWord) return false;
-  if (prevHasCurrentWord && prevProps.currentWordId !== nextProps.currentWordId)
-    return false;
-
-  // selectedWordIds 변경 확인
-  if (prevProps.selectedWordIds !== nextProps.selectedWordIds) return false;
-
-  // 검색 현재 단어가 이 문장에 해당하는지 확인
-  const prevHasSearch = prevProps.sentence.words.some(
-    (w) => w.id === prevProps.currentSearchWordId
+  return (
+    prevProps.sentence === nextProps.sentence &&
+    prevProps.focusedWord === nextProps.focusedWord &&
+    prevProps.currentWordId === nextProps.currentWordId &&
+    prevProps.selectedWordIds === nextProps.selectedWordIds &&
+    prevProps.editingWord === nextProps.editingWord &&
+    prevProps.mode === nextProps.mode
   );
-  const nextHasSearch = nextProps.sentence.words.some(
-    (w) => w.id === nextProps.currentSearchWordId
-  );
-  if (prevHasSearch !== nextHasSearch) return false;
-
-  // searchResultsSet 변경 확인
-  if (prevProps.searchResultsSet !== nextProps.searchResultsSet) return false;
-
-  // silenceThresholdMs 변경 확인
-  if (prevProps.silenceThresholdMs !== nextProps.silenceThresholdMs) return false;
-
-  // editingWord 변경 확인
-  const prevHasEditing = prevProps.editingWord?.sentenceIdx === prevProps.sentenceIdx;
-  const nextHasEditing = nextProps.editingWord?.sentenceIdx === nextProps.sentenceIdx;
-  if (prevHasEditing !== nextHasEditing) return false;
-  if (prevHasEditing && prevProps.editingWord?.wordIdx !== nextProps.editingWord?.wordIdx)
-    return false;
-
-  return true;
 });

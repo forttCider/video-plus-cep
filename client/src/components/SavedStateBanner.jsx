@@ -8,7 +8,7 @@ export default function SavedStateBanner({ hasSavedState, isUpload, isRestoring,
 
   return (
     <Card className="mb-3 border-blue-500 bg-blue-950/30">
-      <CardContent className="py-4 px-4 flex items-center justify-between">
+      <CardContent className="py-3 px-5 flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <History className="w-4 h-4 text-blue-400" />
           <span className="text-sm font-medium text-blue-300">

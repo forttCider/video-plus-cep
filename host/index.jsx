@@ -1996,7 +1996,10 @@ function renderAudio(outputPath) {
         for (var j = 0; j < seq.audioTracks.numTracks; j++) {
             var aTrack = seq.audioTracks[j];
             originalAudioMutes.push(aTrack.isMuted());
-            aTrack.setMute(j !== 0 ? 1 : 0);
+            // 클립이 있는 오디오 트랙만 뮤트 해제, 없으면 뮤트
+            var hasClips = aTrack.clips && aTrack.clips.numItems > 0;
+            aTrack.setMute(hasClips ? 0 : 1);
+            $.writeln("[renderAudio] audioTrack " + j + ": clips=" + (hasClips ? aTrack.clips.numItems : 0) + " mute=" + (hasClips ? 0 : 1));
         }
 
         // 출력 디렉토리 확인/생성
