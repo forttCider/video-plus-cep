@@ -1,3 +1,4 @@
+import { useState, useCallback } from "react"
 import { VolumeX, MessageCircle, Mic, Scissors } from "lucide-react"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
@@ -6,6 +7,9 @@ import SentenceList from "./SentenceList"
 import SummaryPanel from "./SummaryPanel"
 import WaveformPanel from "./WaveformPanel"
 import { getOriginalTimeFromTimeline } from "../js/calculateTimeOffset"
+
+const spkLabels = ["A", "B", "C", "D", "E", "F"]
+const spkColors = ["#4caf50", "#2196f3", "#f44336", "#ff9800", "#9c27b0", "#00bcd4"]
 
 export default function CutEditTab({
   silenceSeconds,
@@ -17,6 +21,8 @@ export default function CutEditTab({
   sentences,
   allSilenceSelected,
   allFillerSelected,
+  silenceCount = 0,
+  fillerCount = 0,
   onSelectSilence,
   onSelectFiller,
   summary,
@@ -43,6 +49,30 @@ export default function CutEditTab({
   onWordTimeChange,
   onWaveformSeek,
 }) {
+  const [checkedSentences, setCheckedSentences] = useState(new Set())
+  const [extraSpkList, setExtraSpkList] = useState([])
+
+  const originalSpkList = [...new Set(sentences.map((s) => s.spk || 0))].sort()
+  const allSpkList = [...new Set([...originalSpkList, ...extraSpkList])].sort()
+
+  const handleCheckChange = useCallback((sentenceIdx, checked) => {
+    setCheckedSentences((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(sentenceIdx)
+      else next.delete(sentenceIdx)
+      return next
+    })
+  }, [])
+
+  const handleBulkSpkChange = useCallback((newSpk) => {
+    // onChangeSpk는 개별 호출이므로 직접 sentences를 변경할 수 없음
+    // 대신 checkedSentences를 순회하며 개별 호출
+    checkedSentences.forEach((idx) => {
+      onChangeSpk(idx, newSpk)
+    })
+    setCheckedSentences(new Set())
+  }, [checkedSentences, onChangeSpk])
+
   return (
     <div className="flex flex-1 min-h-0 gap-0">
       {/* 왼쪽 사이드바 */}
@@ -99,28 +129,71 @@ export default function CutEditTab({
         {/* 세그먼트 헤더 */}
         <div className="flex items-center justify-between py-2 px-4 border-b border-border">
           <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              className={`h-7 text-xs ${allSilenceSelected ? "border border-[#ffa500] text-[#ffa500]" : ""}`}
-              style={allSilenceSelected ? { border: "1px solid #ffa500", color: "#ffa500" } : {}}
-              disabled={!isConnected || isUpload || isProcessing}
-              onClick={onSelectSilence}
-            >
-              <VolumeX className={`h-3.5 w-3.5 mr-1 ${allSilenceSelected ? "text-[#ffa500]" : ""}`} />
-              {allSilenceSelected ? "무음 해제" : "무음 선택"}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              className={`h-7 text-xs ${allFillerSelected ? "border border-[#ffa500] text-[#ffa500]" : ""}`}
-              style={allFillerSelected ? { border: "1px solid #ffa500", color: "#ffa500" } : {}}
-              disabled={!isConnected || isUpload || isProcessing}
-              onClick={onSelectFiller}
-            >
-              <MessageCircle className={`h-3.5 w-3.5 mr-1 ${allFillerSelected ? "text-[#ffa500]" : ""}`} />
-              {allFillerSelected ? "간투사 해제" : "간투사 선택"}
-            </Button>
+            {checkedSentences.size > 0 ? (
+              <>
+                <span className="text-xs font-medium text-primary">
+                  {checkedSentences.size}개 선택 →
+                </span>
+                {allSpkList.map((spk) => (
+                  <Button
+                    key={spk}
+                    variant="secondary"
+                    size="sm"
+                    className="h-7 text-xs px-3 gap-1.5"
+                    onClick={() => handleBulkSpkChange(spk)}
+                  >
+                    <span className="inline-block w-2 h-2 rounded-full" style={{ background: spkColors[spk] || spkColors[0] }} />
+                    화자 {spkLabels[spk] || spk + 1}
+                  </Button>
+                ))}
+                {allSpkList.length < 6 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs px-3 text-muted-foreground"
+                    onClick={() => {
+                      const nextSpk = allSpkList.length > 0 ? Math.max(...allSpkList) + 1 : 0
+                      if (nextSpk < 6) setExtraSpkList((prev) => [...prev, nextSpk])
+                    }}
+                  >
+                    + 화자 추가
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs px-3 text-muted-foreground"
+                  onClick={() => setCheckedSentences(new Set())}
+                >
+                  선택 해제
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={`h-7 text-xs ${allSilenceSelected ? "border border-[#ffa500] text-[#ffa500]" : ""}`}
+                  style={allSilenceSelected ? { border: "1px solid #ffa500", color: "#ffa500" } : {}}
+                  disabled={!isConnected || isUpload || isProcessing || silenceCount === 0}
+                  onClick={onSelectSilence}
+                >
+                  <VolumeX className={`h-3.5 w-3.5 mr-1 ${allSilenceSelected ? "text-[#ffa500]" : ""}`} />
+                  {allSilenceSelected ? "무음 해제" : "무음 선택"} ({silenceCount})
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={`h-7 text-xs ${allFillerSelected ? "border border-[#ffa500] text-[#ffa500]" : ""}`}
+                  style={allFillerSelected ? { border: "1px solid #ffa500", color: "#ffa500" } : {}}
+                  disabled={!isConnected || isUpload || isProcessing || fillerCount === 0}
+                  onClick={onSelectFiller}
+                >
+                  <MessageCircle className={`h-3.5 w-3.5 mr-1 ${allFillerSelected ? "text-[#ffa500]" : ""}`} />
+                  {allFillerSelected ? "간투사 해제" : "간투사 선택"} ({fillerCount})
+                </Button>
+              </>
+            )}
           </div>
           <Button
             size="sm"
@@ -154,6 +227,15 @@ export default function CutEditTab({
           isUpload={isUpload}
           onChangeSpk={onChangeSpk}
           spkList={[...new Set(sentences.map((s) => s.spk || 0))].sort()}
+          checkedSentences={checkedSentences}
+          onCheckChange={handleCheckChange}
+          onSelectSameSpk={(spk) => {
+            const indices = new Set()
+            sentences.forEach((s, idx) => {
+              if ((s.spk || 0) === spk) indices.add(idx)
+            })
+            setCheckedSentences(indices)
+          }}
         />
         </div>
 

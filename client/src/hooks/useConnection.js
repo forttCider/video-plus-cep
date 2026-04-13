@@ -36,8 +36,9 @@ export default function useConnection({
         addLog("info", `시퀀스 ID: ${info.id}`)
         addLog("info", `시퀀스 이름: ${info.name}`)
         if (info.id) {
-          const exists = await checkSavedState(info.id)
-          setHasSavedState(exists)
+          checkSavedState(info.id)
+            .then((exists) => setHasSavedState(exists))
+            .catch(() => {})
         }
       } else {
         setSequenceInfo(null)

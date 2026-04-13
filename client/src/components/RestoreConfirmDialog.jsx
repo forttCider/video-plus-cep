@@ -1,4 +1,5 @@
 import React from "react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "./ui/button"
 import { Card, CardContent } from "./ui/card"
 import {
@@ -9,14 +10,19 @@ import {
   DialogFooter,
 } from "./ui/dialog"
 
-export default function RestoreConfirmDialog({ restoreConfirm, onConfirm, onCancel }) {
+export default function RestoreConfirmDialog({ restoreConfirm, isRestoring, onConfirm, onCancel }) {
   return (
-    <Dialog open={!!restoreConfirm} onOpenChange={() => onCancel()}>
-      <DialogContent className="max-w-sm">
+    <Dialog open={!!restoreConfirm} onOpenChange={() => { if (!isRestoring) onCancel() }}>
+      <DialogContent className="max-w-sm [&>button]:hidden">
         <DialogHeader>
           <DialogTitle>복원 확인</DialogTitle>
         </DialogHeader>
-        {restoreConfirm && (
+        {isRestoring ? (
+          <div className="flex flex-col items-center py-6">
+            <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground mb-3" />
+            <p className="text-sm text-muted-foreground">복원 중...</p>
+          </div>
+        ) : restoreConfirm && (
           <div>
             <Card className="mb-4">
               <CardContent className="py-3 px-3">
@@ -35,12 +41,14 @@ export default function RestoreConfirmDialog({ restoreConfirm, onConfirm, onCanc
             </p>
           </div>
         )}
-        <DialogFooter className="gap-2">
-          <Button variant="secondary" onClick={onCancel}>
-            취소
-          </Button>
-          <Button onClick={onConfirm}>확인</Button>
-        </DialogFooter>
+        {!isRestoring && (
+          <DialogFooter className="gap-2">
+            <Button variant="secondary" onClick={onCancel}>
+              취소
+            </Button>
+            <Button onClick={onConfirm}>확인</Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   )

@@ -283,22 +283,226 @@ export function copyFile(src, dest) {
 }
 
 /**
- * 오디오 렌더링 + ArrayBuffer 반환 (UXP renderAudioIMMEDIATELY와 동일한 인터페이스)
- * @returns {Promise<{arrayBuffer: ArrayBuffer, audioPath: string}>}
+ * ffmpeg 바이너리 경로 가져오기
  */
-export async function renderAudioAndRead() {
-  // 1. 오디오 렌더링
-  const result = await renderAudio()
+function getFFmpegPath() {
+  const path = require("path")
+  const cs = getCSInterface()
+  const ext = process.platform === "win32" ? ".exe" : ""
+  return path.join(cs.getSystemPath(SystemPath.EXTENSION), "bin", "ffmpeg" + ext)
+}
 
-  if (!result.success) {
-    throw new Error(result.error || "렌더링 실패")
+/**
+ * ffmpeg 바이너리 실행 권한 보장 (macOS)
+ */
+function ensureFFmpegExecutable(ffmpegPath) {
+  const { execSync } = require("child_process")
+  const fs = require("fs")
+  if (!fs.existsSync(ffmpegPath)) throw new Error(`ffmpeg not found: ${ffmpegPath}`)
+  if (process.platform === "darwin") {
+    // 현재 권한 확인
+    const stats = fs.statSync(ffmpegPath)
+    const isExecutable = (stats.mode & 0o111) !== 0
+    let hasQuarantine = false
+    try {
+      const xattrResult = execSync(`xattr -l "${ffmpegPath}"`).toString()
+      hasQuarantine = xattrResult.includes("com.apple.quarantine")
+    } catch (e) {}
+
+    if (!isExecutable) {
+      try { execSync(`chmod +x "${ffmpegPath}"`) } catch (e) {}
+    }
+    if (hasQuarantine) {
+      try { execSync(`xattr -dr com.apple.quarantine "${ffmpegPath}"`) } catch (e) {}
+    }
   }
+}
 
-  // 2. 파일을 ArrayBuffer로 읽기
-  const arrayBuffer = await readFileAsArrayBuffer(result.outputPath)
+/**
+ * ExtendScript에서 오디오 클립 정보 가져오기
+ */
+export async function getAudioClipsInfo() {
+  return evalJSON("getAudioClipsInfo()")
+}
 
-  // 원본 경로를 파형용으로 그대로 사용
-  return { arrayBuffer, audioPath: result.outputPath }
+/**
+ * ffmpeg로 오디오 클립 추출 + 병합
+ */
+function extractAndMergeAudio(clips, ffmpegPath, outputPath) {
+  const { execFile } = require("child_process")
+
+  return new Promise((resolve, reject) => {
+    const args = []
+
+    // 고유 입력 파일 목록
+    const inputFiles = [...new Set(clips.map((c) => c.mediaPath))]
+    const inputIndexMap = {}
+    inputFiles.forEach((f, i) => { inputIndexMap[f] = i })
+
+    // -i 플래그
+    inputFiles.forEach((f) => { args.push("-i", f) })
+
+    // 트랙별로 클립 그룹핑
+    const trackGroups = {}
+    clips.forEach((clip) => {
+      if (!trackGroups[clip.trackIndex]) trackGroups[clip.trackIndex] = []
+      trackGroups[clip.trackIndex].push(clip)
+    })
+    const trackIndices = Object.keys(trackGroups).sort((a, b) => a - b)
+
+    const filters = []
+    const trackLabels = []
+    let labelIdx = 0
+
+    trackIndices.forEach((trackIdx) => {
+      const trackClips = trackGroups[trackIdx].sort((a, b) => a.startInSeq - b.startInSeq)
+
+      if (trackClips.length === 1) {
+        // 클립 1개: atrim만
+        const clip = trackClips[0]
+        const inputIdx = inputIndexMap[clip.mediaPath]
+        const label = `t${trackIdx}`
+        filters.push(`[${inputIdx}:a]atrim=start=${clip.inPoint}:end=${clip.outPoint},asetpts=PTS-STARTPTS[${label}]`)
+        trackLabels.push(`[${label}]`)
+      } else {
+        // 클립 여러 개: 각각 atrim 후 concat
+        const clipLabels = []
+        trackClips.forEach((clip) => {
+          const inputIdx = inputIndexMap[clip.mediaPath]
+          const label = `a${labelIdx++}`
+          filters.push(`[${inputIdx}:a]atrim=start=${clip.inPoint}:end=${clip.outPoint},asetpts=PTS-STARTPTS[${label}]`)
+          clipLabels.push(`[${label}]`)
+        })
+        const trackLabel = `t${trackIdx}`
+        filters.push(`${clipLabels.join("")}concat=n=${trackClips.length}:v=0:a=1[${trackLabel}]`)
+        trackLabels.push(`[${trackLabel}]`)
+      }
+    })
+
+    // 트랙이 1개면 그대로, 여러 개면 amix로 병합
+    if (trackLabels.length === 1) {
+      filters.push(`${trackLabels[0]}acopy[out]`)
+    } else {
+      filters.push(`${trackLabels.join("")}amix=inputs=${trackLabels.length}:duration=longest:normalize=0[out]`)
+    }
+
+    args.push("-filter_complex", filters.join(";"))
+    args.push("-map", "[out]")
+    args.push("-ar", "48000")
+    args.push("-ac", "1")
+    args.push("-y", outputPath)
+
+    execFile(ffmpegPath, args, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) {
+        reject(new Error(stderr || err.message))
+      } else {
+        resolve(outputPath)
+      }
+    })
+  })
+}
+
+/**
+ * 오디오 렌더링 + ArrayBuffer 반환
+ * ffmpeg 방식 우선, 실패 시 기존 exportAsMediaDirect 폴백
+ */
+/**
+ * 트랙별 렌더링 (ExtendScript)
+ */
+async function renderAudioPerTrack() {
+  return evalJSON("renderAudioPerTrack()")
+}
+
+/**
+ * ffmpeg로 WAV 파일 여러 개를 amix 믹싱
+ */
+function mixAudioFiles(inputPaths, ffmpegPath, outputPath) {
+  const { execFile } = require("child_process")
+
+  return new Promise((resolve, reject) => {
+    const args = []
+    inputPaths.forEach((f) => { args.push("-i", f) })
+
+    if (inputPaths.length === 1) {
+      // 트랙 1개면 그냥 복사
+      args.push("-c", "copy", "-y", outputPath)
+    } else {
+      // 여러 트랙 amix 믹싱
+      args.push("-filter_complex", `amix=inputs=${inputPaths.length}:duration=longest:normalize=0`)
+      args.push("-ar", "48000", "-ac", "1", "-y", outputPath)
+    }
+
+    execFile(ffmpegPath, args, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) reject(new Error(stderr || err.message))
+      else resolve(outputPath)
+    })
+  })
+}
+
+/**
+ * 오디오 렌더링 + ArrayBuffer 반환
+ * 트랙별 렌더링 → ffmpeg amix 믹싱
+ * 실패 시 기존 exportAsMediaDirect 폴백
+ */
+export async function renderAudioAndRead(log) {
+  const path = require("path")
+  const os = require("os")
+  const fs = require("fs")
+  const _log = (msg) => { log && log(msg) }
+
+  try {
+    // 1. 트랙별 개별 렌더링
+    _log("트랙별 오디오 렌더링 시작...")
+    const trackResult = await renderAudioPerTrack()
+
+    if (!trackResult.success || !trackResult.tracks || trackResult.tracks.length === 0) {
+      throw new Error(trackResult.error || "트랙 렌더링 실패")
+    }
+
+    _log("렌더링 완료: " + trackResult.tracks.length + "개 트랙")
+
+    const trackPaths = trackResult.tracks.map((t) => t.outputPath)
+
+    // 2. 트랙이 1개면 그대로 사용, 여러 개면 ffmpeg amix
+    const homeDir = os.homedir()
+    const outputPath = path.join(homeDir, ".videoPlus", "videoplus_audio.wav")
+
+    if (trackPaths.length === 1) {
+      // 트랙 1개: 파일 이름만 변경
+      const srcPath = trackPaths[0]
+      if (srcPath !== outputPath) {
+        fs.copyFileSync(srcPath, outputPath)
+      }
+      _log("트랙 1개 → 그대로 사용")
+    } else {
+      // 여러 트랙: ffmpeg amix 믹싱
+      const ffmpegPath = getFFmpegPath()
+      _log("ffmpeg 경로: " + ffmpegPath)
+      ensureFFmpegExecutable(ffmpegPath)
+      _log("ffmpeg 믹싱: " + trackPaths.length + "개 트랙")
+      await mixAudioFiles(trackPaths, ffmpegPath, outputPath)
+      _log("ffmpeg 믹싱 완료")
+    }
+
+    // 3. 트랙별 임시 파일 정리
+    trackPaths.forEach((p) => {
+      try { if (p !== outputPath) fs.unlinkSync(p) } catch (e) {}
+    })
+
+    // 4. ArrayBuffer로 읽기
+    const arrayBuffer = await readFileAsArrayBuffer(outputPath)
+    return { arrayBuffer, audioPath: outputPath }
+  } catch (err) {
+    _log("트랙별 렌더링+믹싱 실패: " + err.message + " → 폴백(전체 렌더링)")
+
+    // 폴백: 기존 방식 (전체 시퀀스 한 번에 렌더링)
+    const result = await renderAudio()
+    if (!result.success) {
+      throw new Error(result.error || "렌더링 실패")
+    }
+    const arrayBuffer = await readFileAsArrayBuffer(result.outputPath)
+    return { arrayBuffer, audioPath: result.outputPath }
+  }
 }
 
 /**

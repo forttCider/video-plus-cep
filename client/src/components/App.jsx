@@ -3,6 +3,7 @@ import { RefreshCw } from "lucide-react"
 import { Button } from "./ui/button"
 import { Card, CardContent } from "./ui/card"
 import AppHeader from "./AppHeader"
+import { nodeGet, abortNodeRequest } from "../js/nodeFetch"
 
 import BatchProgress from "./BatchProgress"
 import LogPanel from "./LogPanel"
@@ -55,6 +56,15 @@ function formatBackupName() {
 }
 
 export default function App() {
+  // === 패널 닫힘 시 진행 중 요청 중단 ===
+  useEffect(() => {
+    const handler = () => {
+      abortNodeRequest()
+    }
+    window.addEventListener("beforeunload", handler)
+    return () => window.removeEventListener("beforeunload", handler)
+  }, [])
+
   // === States ===
   const [sequenceInfo, setSequenceInfo] = useState(null)
   const [numSpeakers, setNumSpeakers] = useState(2)
@@ -68,6 +78,7 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [batchProgress, setBatchProgress] = useState(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const [selectedWordIds, setSelectedWordIds] = useState(new Set())
   const [backupList, setBackupList] = useState([])
   const [restoreConfirm, setRestoreConfirm] = useState(null)
@@ -318,8 +329,25 @@ export default function App() {
   }
 
   const handleSummarySeek = async (timeSec) => {
-    // const timelineTime = getTimelineTimeFromOriginal(timeSec) // 삭제 반영 버전
-    await setPlayerPosition(timeSec)
+    const timelineTime = getTimelineTimeFromOriginal(timeSec)
+    await setPlayerPosition(timelineTime)
+    // 해당 위치의 단어 찾아서 포커스 + 스크롤
+    if (timelineIndexRef.current) {
+      const found = findCurrentWordFromIndex(timelineIndexRef.current, timelineTime)
+      if (found?.word) {
+        let sIdx = -1, wIdx = -1
+        sentencesRef.current.forEach((s, si) => {
+          s.words?.forEach((w, wi) => {
+            if (w.start_at === found.word.start_at) { sIdx = si; wIdx = wi }
+          })
+        })
+        if (sIdx >= 0) {
+          setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
+          setCurrentWordId(found.word.start_at)
+          wordRefs.current[found.word.start_at]?.scrollIntoView({ behavior: "instant", block: "center" })
+        }
+      }
+    }
   }
 
   const handleWaveformSeek = async (time) => {
@@ -476,6 +504,7 @@ export default function App() {
   const {
     undo: subsUndo,
     redo: subsRedo,
+    pushUndo: subsPushUndo,
     undoStackRef,
     redoStackRef,
   } = useSubtitleKeyboard({
@@ -497,12 +526,16 @@ export default function App() {
       restoreConfirm,
       setRestoreConfirm,
       setShowHistory,
+      setIsLoadingHistory,
       setBackupList,
       setStatus,
+      setIsRestoring,
       loadSequenceInfo,
     })
 
   const {
+    silenceWordIds,
+    fillerWordIds,
     allSilenceSelected,
     allFillerSelected,
     handleSelectSilence,
@@ -599,10 +632,22 @@ export default function App() {
           setSubsMaxWords(subtitleData.maxWords || 4)
           addLog("info", "자막 편집 데이터 복원됨")
         }
-        // 요약본: 불러오기 데이터에 포함된 요약 사용 (API 호출 없음)
+        // 요약본: 불러오기 데이터에 포함되면 바로 사용, 없으면 task_id로 API 호출
         if (savedState.summaryData) {
           setSummary(savedState.summaryData)
           addLog("info", "요약본 복원됨")
+        } else if (savedState.taskId) {
+          setSummaryLoading(true)
+          addLog("info", "요약본 API 요청 중...")
+          nodeGet(`https://vapi.cidermics.com/transcribe/summary/${savedState.taskId}`)
+            .then((data) => {
+              if (data) {
+                setSummary(data)
+                addLog("info", "요약본 불러오기 완료")
+              }
+            })
+            .catch(() => addLog("warn", "요약본 불러오기 실패"))
+            .finally(() => setSummaryLoading(false))
         }
       } else {
         setStatus("복원할 데이터가 없습니다")
@@ -741,6 +786,8 @@ export default function App() {
               sentences={sentences}
               allSilenceSelected={allSilenceSelected}
               allFillerSelected={allFillerSelected}
+              silenceCount={silenceWordIds.size}
+              fillerCount={fillerWordIds.size}
               onSelectSilence={handleSelectSilence}
               onSelectFiller={handleSelectFiller}
               numSpeakers={numSpeakers}
@@ -804,6 +851,7 @@ export default function App() {
               onWordEditingEnd={() => setEditingWord(null)}
               handleCaptionClick={handleCaptionClick}
               isConnected={isConnected}
+              pushUndo={subsPushUndo}
             />
         </div>
 
@@ -811,10 +859,12 @@ export default function App() {
           open={showHistory}
           onClose={setShowHistory}
           backupList={backupList}
+          isLoading={isLoadingHistory}
           onBackupClick={handleBackupClick}
         />
         <RestoreConfirmDialog
           restoreConfirm={restoreConfirm}
+          isRestoring={isRestoring}
           onConfirm={handleRestoreConfirm}
           onCancel={() => setRestoreConfirm(null)}
         />

@@ -20,7 +20,7 @@
 }
 
 .word-deleted-subs {
-  color: #e74c3c;
+  color: #5e5e5e;
   text-decoration: line-through;
 }
 
@@ -55,14 +55,14 @@
 
 /* K키로 선택된 단어 (삭제 예정) */
 .word-selected {
-  color: #5e5e5e;
+  color: #e74c3c;
   text-decoration: line-through;
 }
 
 /* 무음/간투사(word-edit)가 선택됐을 때 */
 .word-edit.word-selected {
   background-color: #3a3a3a;
-  color: #888;
+  color: #e74c3c;
   text-decoration: line-through;
 }
 

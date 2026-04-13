@@ -70,7 +70,7 @@ export default function useAudioUpload({
 
     try {
       // 오디오 렌더링 + ArrayBuffer 읽기
-      const result = await renderAudioAndRead()
+      const result = await renderAudioAndRead((msg) => addLog && addLog("info", msg))
 
       const { arrayBuffer, audioPath: renderedAudioPath } = result
 
@@ -100,38 +100,61 @@ export default function useAudioUpload({
   // 업로드 큐 등록
   const publishQueue = async (arrayBuffer) => {
     addLog && addLog("info", "받아쓰기 요청 중...")
+    const queueUrl = `${API_URL}/transcribe/queue`
+    const fileSizeMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(2)
+    addLog && addLog("info", `요청 URL: ${queueUrl}`)
+    addLog && addLog("info", `오디오 크기: ${fileSizeMB} MB (${arrayBuffer.byteLength} bytes)`)
+    addLog && addLog("info", `화자 수: ${numSpeakersRef?.current || 2}`)
     try {
       // 프로젝트/시퀀스 ID 가져오기 (청크 업로드 시 전달용)
       const documentID = await getProjectDocumentID()
       const seqInfo = await getActiveSequenceInfo()
+      addLog && addLog("info", `documentID: ${documentID}, sequenceID: ${seqInfo?.id}`)
 
-      const response = await fetch(`${API_URL}/transcribe/queue`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          filename: "audio.wav",
-          file_size: arrayBuffer.byteLength,
-          num_speakers: numSpeakersRef?.current || 2,
-        }),
+      const requestBody = JSON.stringify({
+        filename: "audio.wav",
+        file_size: arrayBuffer.byteLength,
+        num_speakers: numSpeakersRef?.current || 2,
       })
 
+      addLog && addLog("info", "fetch 호출 시작...")
+      const fetchStart = Date.now()
+      let response
+      try {
+        response = await fetch(queueUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: requestBody,
+        })
+      } catch (fetchErr) {
+        const elapsed = Date.now() - fetchStart
+        addLog && addLog("error", `fetch 실패 (${elapsed}ms): ${fetchErr.name} - ${fetchErr.message}`)
+        addLog && addLog("error", `에러 스택: ${fetchErr.stack || "(스택 없음)"}`)
+        throw fetchErr
+      }
+      addLog && addLog("info", `fetch 응답: status=${response.status} (${Date.now() - fetchStart}ms)`)
+
       if (!response.ok) {
-        const error = await response.json()
+        let errorDetail
+        try {
+          const error = await response.json()
+          errorDetail = error.detail || JSON.stringify(error)
+        } catch (e) {
+          errorDetail = await response.text().catch(() => "(응답 본문 없음)")
+        }
         addLog &&
-          addLog(
-            "error",
-            "서버 응답 오류: " + (error.detail || response.status),
-          )
+          addLog("error", `서버 응답 오류 ${response.status}: ${errorDetail}`)
         isErrorRef.current = true
         setIsError(true)
         setIsUpload(false)
         setUploadFile((prev) =>
-          prev ? { ...prev, message: error.detail } : null,
+          prev ? { ...prev, message: errorDetail } : null,
         )
         return
       }
 
       const resData = await response.json()
+      addLog && addLog("info", `task_id 발급: ${resData.task_id}, total_chunks: ${resData.total_chunks}`)
       currentTaskIdRef.current = resData.task_id // 🔥 현재 taskId 저장
       setUploadFile((prev) =>
         prev ? { ...prev, taskId: resData.task_id } : null,
@@ -150,7 +173,7 @@ export default function useAudioUpload({
       startPolling(resData.task_id)
     } catch (error) {
       console.error("[useAudioUpload] 큐 등록 오류:", error)
-      addLog && addLog("error", "서버 연결 오류: " + error.message)
+      addLog && addLog("error", `서버 연결 오류: ${error.name} - ${error.message}`)
       isErrorRef.current = true
       setIsError(true)
       setIsUpload(false)

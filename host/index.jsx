@@ -1962,6 +1962,56 @@ function findAudioPreset() {
     return null;
 }
 
+/**
+ * 오디오 트랙의 모든 클립 정보를 JSON으로 반환
+ * ffmpeg로 소스 파일에서 직접 오디오를 추출하기 위한 정보
+ */
+function getAudioClipsInfo() {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return '{"success":false,"error":"시퀀스를 열어주세요"}';
+
+        var clips = [];
+        for (var a = 0; a < seq.audioTracks.numTracks; a++) {
+            var track = seq.audioTracks[a];
+            if (!track.clips || track.clips.numItems === 0) continue;
+
+            for (var c = 0; c < track.clips.numItems; c++) {
+                var clip = track.clips[c];
+                var projItem = clip.projectItem;
+                if (!projItem) continue;
+
+                var mediaPath = null;
+                try { mediaPath = projItem.getMediaPath(); } catch (e) {}
+                if (!mediaPath) continue;
+
+                var startInSeq = parseFloat(clip.start.seconds);
+                var endInSeq = parseFloat(clip.end.seconds);
+                var inPoint = parseFloat(clip.inPoint.seconds);
+                var outPoint = parseFloat(clip.outPoint.seconds);
+                var speed = 1;
+                try { speed = clip.getSpeed(); } catch (e) {}
+
+                clips.push(
+                    '{"trackIndex":' + a +
+                    ',"clipIndex":' + c +
+                    ',"mediaPath":"' + mediaPath.replace(/\\/g, '/').replace(/"/g, '\\"') + '"' +
+                    ',"startInSeq":' + startInSeq +
+                    ',"endInSeq":' + endInSeq +
+                    ',"inPoint":' + inPoint +
+                    ',"outPoint":' + outPoint +
+                    ',"speed":' + speed +
+                    ',"duration":' + (endInSeq - startInSeq) + '}'
+                );
+            }
+        }
+
+        return '{"success":true,"clips":[' + clips.join(',') + ']}';
+    } catch (e) {
+        return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
+    }
+}
+
 function renderAudio(outputPath) {
     try {
         $.writeln("[renderAudio] outputPath(param): " + outputPath);
@@ -2043,6 +2093,94 @@ function renderAudio(outputPath) {
         }
     } catch (e) {
         $.writeln("[renderAudio] ERROR: " + e.toString());
+        return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
+    }
+}
+
+/**
+ * 클립이 있는 오디오 트랙을 각각 개별 WAV로 렌더링
+ * @returns JSON { success, tracks: [{ trackIndex, outputPath }] }
+ */
+function renderAudioPerTrack() {
+    try {
+        if (!app || !app.project) return '{"success":false,"error":"프로젝트가 없습니다"}';
+        var seq = app.project.activeSequence;
+        if (!seq) return '{"success":false,"error":"시퀀스를 열어주세요"}';
+
+        var homeFolder = new Folder("~");
+        var vpFolder = new Folder(homeFolder.fsName + "/.videoPlus");
+        if (!vpFolder.exists) vpFolder.create();
+
+        var presetPath = findAudioPreset();
+        if (!presetPath) {
+            var osName = ($.os.indexOf("Mac") !== -1) ? "Mac" : "Windows";
+            return '{"success":false,"error":"오디오 프리셋을 찾을 수 없습니다 (OS: ' + osName + ')"}';
+        }
+        var nativePresetPath = new File(presetPath).fsName;
+
+        // 원본 뮤트 상태 저장
+        var originalVideoMutes = [];
+        var originalAudioMutes = [];
+        for (var i = 0; i < seq.videoTracks.numTracks; i++) {
+            originalVideoMutes.push(seq.videoTracks[i].isMuted());
+        }
+        for (var j = 0; j < seq.audioTracks.numTracks; j++) {
+            originalAudioMutes.push(seq.audioTracks[j].isMuted());
+        }
+
+        // 클립이 있는 트랙 목록
+        var tracksWithClips = [];
+        for (var t = 0; t < seq.audioTracks.numTracks; t++) {
+            var track = seq.audioTracks[t];
+            if (track.clips && track.clips.numItems > 0) {
+                tracksWithClips.push(t);
+            }
+        }
+
+        if (tracksWithClips.length === 0) {
+            restoreTracks(seq, originalVideoMutes, originalAudioMutes);
+            return '{"success":false,"error":"오디오 클립이 없습니다"}';
+        }
+
+        // 비디오 전체 뮤트
+        for (var vi = 0; vi < seq.videoTracks.numTracks; vi++) {
+            seq.videoTracks[vi].setMute(1);
+        }
+
+        var results = [];
+
+        for (var ti = 0; ti < tracksWithClips.length; ti++) {
+            var trackIdx = tracksWithClips[ti];
+            var outputPath = vpFolder.fsName.replace(/\\/g, "/") + "/videoplus_audio_track" + trackIdx + ".wav";
+
+            // 해당 트랙만 뮤트 해제, 나머지 전부 뮤트
+            for (var aj = 0; aj < seq.audioTracks.numTracks; aj++) {
+                seq.audioTracks[aj].setMute(aj === trackIdx ? 0 : 1);
+            }
+
+            var outputFile = new File(outputPath);
+            var nativeOutputPath = outputFile.fsName;
+
+            $.writeln("[renderAudioPerTrack] track " + trackIdx + " -> " + nativeOutputPath);
+            var success = seq.exportAsMediaDirect(nativeOutputPath, nativePresetPath, 0);
+
+            if (success && outputFile.exists) {
+                results.push('{"trackIndex":' + trackIdx + ',"outputPath":"' + outputPath.replace(/\\/g, "\\\\") + '"}');
+            } else {
+                $.writeln("[renderAudioPerTrack] track " + trackIdx + " 렌더링 실패");
+            }
+        }
+
+        // 원본 뮤트 상태 복원
+        restoreTracks(seq, originalVideoMutes, originalAudioMutes);
+
+        if (results.length === 0) {
+            return '{"success":false,"error":"모든 트랙 렌더링 실패"}';
+        }
+
+        return '{"success":true,"tracks":[' + results.join(',') + ']}';
+    } catch (e) {
+        $.writeln("[renderAudioPerTrack] ERROR: " + e.toString());
         return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
     }
 }
@@ -3015,7 +3153,9 @@ function exportCaptionsAsSRT(sentencesJSON) {
             }
 
             var ts = new Date().getTime();
-            var srtPath = captionsFolder.fsName + "/speaker" + (parseInt(spkKey, 10) + 1) + "_" + ts + ".srt";
+            var spkLabels = ["A", "B", "C", "D", "E", "F"];
+            var spkLabel = spkLabels[parseInt(spkKey, 10)] || (parseInt(spkKey, 10) + 1);
+            var srtPath = captionsFolder.fsName + "/speaker" + spkLabel + "_" + ts + ".srt";
             var srtFile = new File(srtPath);
             srtFile.encoding = "UTF-8";
             srtFile.lineFeed = "Unix";

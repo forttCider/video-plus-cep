@@ -1,5 +1,5 @@
-import React, { forwardRef } from "react";
-import { Scissors, Undo2, Play } from "lucide-react";
+import React, { forwardRef, useState, useRef, useEffect } from "react";
+import { Scissors, Undo2, Play, ChevronDown } from "lucide-react";
 import Word from "./Word";
 import "./css/Sentence.css";
 import { getTimelinePosition } from "../js/calculateTimeOffset";
@@ -33,6 +33,9 @@ const Sentence = forwardRef(
       onWordTextUpdate,
       onWordEditingEnd,
       originalSentences,
+      isChecked = false,
+      onCheckChange,
+      onSelectSameSpk,
     },
     ref
   ) => {
@@ -94,17 +97,64 @@ const Sentence = forwardRef(
                 {sentence.start_time} — {sentence.end_time}
               </span>
             </div>
-            <select
-              className="sentence-spk-select"
-              value={spk}
-              onChange={(e) => onChangeSpk?.(sentenceIdx, parseInt(e.target.value, 10))}
-            >
+            {onCheckChange ? (
+              <div className="sentence-check-group">
+                <label className={`sentence-custom-checkbox ${isChecked ? "checked" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={(e) => onCheckChange(sentenceIdx, e.target.checked)}
+                  />
+                  {isChecked && <svg viewBox="0 0 12 10" className="sentence-check-icon"><polyline points="1.5 5 4.5 8 10.5 2" /></svg>}
+                </label>
+                {onSelectSameSpk && (() => {
+                  const [menuOpen, setMenuOpen] = useState(false)
+                  const menuRef = useRef(null)
+
+                  useEffect(() => {
+                    if (!menuOpen) return
+                    const handleClickOutside = (e) => {
+                      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false)
+                    }
+                    document.addEventListener("mousedown", handleClickOutside)
+                    return () => document.removeEventListener("mousedown", handleClickOutside)
+                  }, [menuOpen])
+
+                  return (
+                    <div className="sentence-check-dropdown" ref={menuRef}>
+                      <button
+                        className="sentence-check-arrow"
+                        onClick={() => setMenuOpen(!menuOpen)}
+                      >
+                        <ChevronDown size={12} />
+                      </button>
+                      {menuOpen && (
+                        <div className="sentence-check-menu">
+                          <button
+                            className="sentence-check-menu-item"
+                            onClick={() => { onSelectSameSpk(spk); setMenuOpen(false) }}
+                          >
+                            화자 {badgeLabel} 모두 선택
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
+            ) : (
+              <select
+                className="sentence-spk-select"
+                value={spk}
+                onChange={(e) => onChangeSpk?.(sentenceIdx, parseInt(e.target.value, 10))}
+              >
               {spkList.map((s) => (
                 <option key={s} value={s} style={{ background: "#1e1e1e", color: "#fff" }}>
                   화자 {spkLabels[s] || s + 1}
                 </option>
               ))}
             </select>
+            )}
           </div>
 
           {/* 하단: 단어들 */}
@@ -159,6 +209,8 @@ export default React.memo(Sentence, (prevProps, nextProps) => {
     prevProps.currentWordId === nextProps.currentWordId &&
     prevProps.selectedWordIds === nextProps.selectedWordIds &&
     prevProps.editingWord === nextProps.editingWord &&
-    prevProps.mode === nextProps.mode
+    prevProps.mode === nextProps.mode &&
+    prevProps.isChecked === nextProps.isChecked &&
+    prevProps.silenceThresholdMs === nextProps.silenceThresholdMs
   );
 });

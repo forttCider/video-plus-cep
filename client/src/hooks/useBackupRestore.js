@@ -19,15 +19,23 @@ export default function useBackupRestore({
   restoreConfirm,
   setRestoreConfirm,
   setShowHistory,
+  setIsLoadingHistory,
   setBackupList,
   setStatus,
+  setIsRestoring,
   loadSequenceInfo,
 }) {
   const handleOpenHistory = async () => {
-    const result = await getBackupList()
-    if (result?.success) {
-      setBackupList(result.backups || [])
-      setShowHistory(true)
+    setBackupList([])
+    setShowHistory(true)
+    setIsLoadingHistory(true)
+    try {
+      const result = await getBackupList()
+      if (result?.success) {
+        setBackupList(result.backups || [])
+      }
+    } finally {
+      setIsLoadingHistory(false)
     }
   }
 
@@ -36,8 +44,7 @@ export default function useBackupRestore({
   const handleRestoreConfirm = async () => {
     if (!restoreConfirm?.backup) return
     const backupId = restoreConfirm.backup.backupId
-    setRestoreConfirm(null)
-    setStatus("복원 중...")
+    setIsRestoring(true)
     const result = await restoreFromBackup(backupId)
     if (result?.success) {
       setShowHistory(false)
@@ -79,10 +86,12 @@ export default function useBackupRestore({
           }),
         })
           .then((res) => res.json())
-          .then((data) => console.log("[복원 매핑] 응답:", data))
-          .catch((e) => console.warn("[복원 매핑] 실패:", e.message))
+          .catch(() => {})
       }
     } else setStatus(`복원 실패: ${result?.error || "알 수 없는 오류"}`)
+    setIsRestoring(false)
+    setRestoreConfirm(null)
+    setShowHistory(false)
   }
 
   return { handleOpenHistory, handleBackupClick, handleRestoreConfirm }

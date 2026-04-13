@@ -1,5 +1,5 @@
 import React from "react"
-import { Mic, VolumeX, MessageCircle, Loader2 } from "lucide-react"
+import { Mic, AudioLines, VolumeX, MessageCircle, Loader2, ChevronDown } from "lucide-react"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Slider } from "./ui/slider"
@@ -45,37 +45,53 @@ export default function CutEditControls({
           />
         </div>
         <div className="flex flex-col items-center justify-center flex-1 px-6 text-center gap-4">
-        {/* Mic icon in circle */}
+        {/* Icon */}
         <div className="flex items-center justify-center w-16 h-16 rounded-full bg-muted mb-2">
-          <Mic className="h-7 w-7 text-muted-foreground" />
+          {isUpload ? (
+            <AudioLines className="h-7 w-7 text-muted-foreground" />
+          ) : (
+            <Mic className="h-7 w-7 text-muted-foreground" />
+          )}
         </div>
 
         {/* Title & subtitle */}
         <div className="space-y-1.5">
-          <h2 className="text-lg font-bold">받아쓰기를 시작하세요</h2>
+          <h2 className="text-lg font-bold">
+            {isUpload ? "받아쓰기 진행 중..." : "받아쓰기를 시작하세요"}
+          </h2>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            타임라인의 오디오를 자동으로 텍스트로 변환합니다
-            <br />
-            화자 수를 선택하고 시작하세요
+            {isUpload ? (
+              "오디오를 분석하고 있습니다. 잠시만 기다려주세요."
+            ) : (
+              <>
+                타임라인의 오디오를 자동으로 텍스트로 변환합니다
+                <br />
+                화자 수를 선택하고 시작하세요
+              </>
+            )}
           </p>
         </div>
 
         {/* Speaker select card */}
-        <div className="w-full max-w-sm border border-border rounded-lg flex items-stretch overflow-hidden">
+        <div className={`w-full max-w-sm border border-border rounded-lg flex items-stretch overflow-hidden ${isUpload ? "opacity-50 pointer-events-none" : ""}`}>
           <span className="text-sm text-muted-foreground px-4 flex items-center bg-muted/30 border-r border-border whitespace-nowrap">
             화자 수
           </span>
-          <select
-            className="flex-1 bg-transparent text-sm px-4 py-3 outline-none cursor-pointer text-foreground appearance-none"
-            value={numSpeakers}
-            onChange={(e) => onNumSpeakersChange(parseInt(e.target.value, 10))}
-          >
-            {[1, 2, 3, 4, 5, 6].map((n) => (
-              <option key={n} value={n} style={{ background: "#1e1e1e", color: "#fff" }}>
-                {n}명
-              </option>
-            ))}
-          </select>
+          <div className="flex-1 relative">
+            <select
+              className="w-full bg-transparent text-sm px-4 py-3 pr-8 outline-none cursor-pointer text-foreground appearance-none"
+              value={numSpeakers}
+              onChange={(e) => onNumSpeakersChange(parseInt(e.target.value, 10))}
+              disabled={isUpload}
+            >
+              {[1, 2, 3, 4, 5, 6].map((n) => (
+                <option key={n} value={n} style={{ background: "#1e1e1e", color: "#fff" }}>
+                  {n}명
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          </div>
         </div>
 
         {/* Start button */}

@@ -24,6 +24,9 @@ export default function SentenceList({
   onWordTextUpdate,
   onWordEditingEnd,
   originalSentences,
+  checkedSentences,
+  onCheckChange,
+  onSelectSameSpk,
 }) {
   return (
     <div className="flex-1 overflow-y-auto">
@@ -61,6 +64,9 @@ export default function SentenceList({
               onWordTextUpdate={onWordTextUpdate}
               onWordEditingEnd={onWordEditingEnd}
               originalSentences={originalSentences}
+              isChecked={checkedSentences ? checkedSentences.has(sentenceIdx) : false}
+              onCheckChange={onCheckChange}
+              onSelectSameSpk={onSelectSameSpk}
             />
           ))
         ) : (

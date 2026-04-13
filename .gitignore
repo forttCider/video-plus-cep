@@ -9,3 +9,7 @@ _build/
 build-zxp.js
 install-mac.sh
 install-windows.bat
+
+CLAUDE.md
+.aidlc-rule-details/
+aidlc-docs/
