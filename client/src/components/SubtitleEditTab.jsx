@@ -1,9 +1,21 @@
 import { startTransition, useState, useCallback } from "react"
+import { Copy, Check } from "lucide-react"
 import { Button } from "./ui/button"
 import SentenceList from "./SentenceList"
 import { splitForSubtitles } from "../js/subtitleSplitter"
 
 const spkLabels = ["A", "B", "C", "D", "E", "F"]
+
+function subsToText(subsSentences) {
+  return subsSentences
+    .map((s) => {
+      const spk = spkLabels[s.spk] || String.fromCharCode(65 + (s.spk || 0))
+      const time = s.start_time || ""
+      const msg = s.msg || (s.words || []).map((w) => w.text).join(" ")
+      return `${spk} [${time}] ${msg}`
+    })
+    .join("\n")
+}
 
 export default function SubtitleEditTab({
   sentences,
@@ -34,12 +46,17 @@ export default function SubtitleEditTab({
   handleCaptionClick,
   isConnected,
   pushUndo,
+  spkNames = {},
 }) {
   const [checkedSentences, setCheckedSentences] = useState(new Set())
-  const [extraSpkList, setExtraSpkList] = useState([])
+  const [subsCopied, setSubsCopied] = useState(false)
 
-  // 전체 사용 가능한 화자 목록 (원본 + 추가된 화자)
-  const allSpkList = [...new Set([...originalSpkList, ...extraSpkList])].sort()
+  const allSpkList = [
+    ...new Set([
+      ...originalSpkList,
+      ...Object.keys(spkNames).map(Number),
+    ]),
+  ].sort((a, b) => a - b)
 
   const handleCheckChange = useCallback((sentenceIdx, checked) => {
     setCheckedSentences((prev) => {
@@ -91,23 +108,10 @@ export default function SubtitleEditTab({
                     onClick={() => handleBulkSpkChange(spk)}
                   >
                     <span className="inline-block w-2 h-2 rounded-full" style={{ background: color }} />
-                    화자 {spkLabels[spk] || spk + 1}
+                    {spkNames[spk] || `화자 ${spkLabels[spk] || spk + 1}`}
                   </Button>
                 )
               })}
-              {allSpkList.length < 6 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs px-3 text-muted-foreground"
-                  onClick={() => {
-                    const nextSpk = allSpkList.length > 0 ? Math.max(...allSpkList) + 1 : 0
-                    if (nextSpk < 6) setExtraSpkList((prev) => [...prev, nextSpk])
-                  }}
-                >
-                  + 화자 추가
-                </Button>
-              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -156,6 +160,34 @@ export default function SubtitleEditTab({
               }}
             />
             <div className="flex-1" />
+            <button
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mr-2"
+              disabled={subsSentences.length === 0}
+              onClick={() => {
+                const textarea = document.createElement("textarea")
+                textarea.value = subsToText(subsSentences)
+                textarea.style.position = "fixed"
+                textarea.style.opacity = "0"
+                document.body.appendChild(textarea)
+                textarea.select()
+                document.execCommand("copy")
+                document.body.removeChild(textarea)
+                setSubsCopied(true)
+                setTimeout(() => setSubsCopied(false), 1500)
+              }}
+            >
+              {subsCopied ? (
+                <>
+                  <Check className="h-3 w-3" />
+                  복사됨
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3 w-3" />
+                  텍스트 복사
+                </>
+              )}
+            </button>
             <Button
               size="sm"
               className="h-7 shrink-0"
@@ -202,6 +234,7 @@ export default function SubtitleEditTab({
           })
           setCheckedSentences(indices)
         }}
+        spkNames={spkNames}
       />
       </div>
     </div>

@@ -467,6 +467,20 @@ export async function renderAudioAndRead(log) {
     const homeDir = os.homedir()
     const outputPath = path.join(homeDir, ".videoPlus", "videoplus_audio.wav")
 
+    // 디버그용 사본 폴더 (타임스탬프별)
+    const ts = new Date().toISOString().replace(/[:.]/g, "-")
+    const debugDir = path.join(homeDir, ".videoPlus", "debug", ts)
+    try { fs.mkdirSync(debugDir, { recursive: true }) } catch (e) {}
+
+    // 트랙별 사본 저장 (확인용)
+    trackPaths.forEach((p, i) => {
+      try {
+        const dest = path.join(debugDir, `track_${i + 1}${path.extname(p) || ".wav"}`)
+        fs.copyFileSync(p, dest)
+      } catch (e) { _log("트랙 사본 저장 실패: " + e.message) }
+    })
+    _log("트랙별 사본 저장: " + debugDir)
+
     if (trackPaths.length === 1) {
       // 트랙 1개: 파일 이름만 변경
       const srcPath = trackPaths[0]
@@ -483,6 +497,13 @@ export async function renderAudioAndRead(log) {
       await mixAudioFiles(trackPaths, ffmpegPath, outputPath)
       _log("ffmpeg 믹싱 완료")
     }
+
+    // 믹싱 결과 사본 저장 (확인용)
+    try {
+      const mixedDest = path.join(debugDir, "mixed.wav")
+      fs.copyFileSync(outputPath, mixedDest)
+      _log("믹싱 사본 저장: " + mixedDest)
+    } catch (e) { _log("믹싱 사본 저장 실패: " + e.message) }
 
     // 3. 트랙별 임시 파일 정리
     trackPaths.forEach((p) => {

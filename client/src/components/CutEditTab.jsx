@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react"
-import { VolumeX, MessageCircle, Mic, Scissors } from "lucide-react"
+import { VolumeX, MessageCircle, Mic, Scissors, Copy, Check } from "lucide-react"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Slider } from "./ui/slider"
@@ -10,6 +10,20 @@ import { getOriginalTimeFromTimeline } from "../js/calculateTimeOffset"
 
 const spkLabels = ["A", "B", "C", "D", "E", "F"]
 const spkColors = ["#4caf50", "#2196f3", "#f44336", "#ff9800", "#9c27b0", "#00bcd4"]
+
+function summaryToText(summary) {
+  const segments = summary?.data?.segments || summary?.segments || []
+  return segments.map((seg) => {
+    const idx = seg.segment_index + 1
+    const title = seg.topic || `구간 ${idx}`
+    const time = seg.start_time || seg.end_time ? `\n   ${seg.start_time} — ${seg.end_time}` : ""
+    const subs = (seg.subtopics || []).map((sub, si) => {
+      const points = (sub.points || []).map((p) => `      · ${p}`).join("\n")
+      return `   ${idx}.${si + 1} ${sub.title}${points ? "\n" + points : ""}`
+    }).join("\n\n")
+    return `${idx}. ${title}${time}${subs ? "\n\n" + subs : ""}`
+  }).join("\n\n\n")
+}
 
 export default function CutEditTab({
   silenceSeconds,
@@ -48,12 +62,17 @@ export default function CutEditTab({
   isPlayingState,
   onWordTimeChange,
   onWaveformSeek,
+  spkNames = {},
 }) {
   const [checkedSentences, setCheckedSentences] = useState(new Set())
-  const [extraSpkList, setExtraSpkList] = useState([])
+  const [summaryCopied, setSummaryCopied] = useState(false)
 
-  const originalSpkList = [...new Set(sentences.map((s) => s.spk || 0))].sort()
-  const allSpkList = [...new Set([...originalSpkList, ...extraSpkList])].sort()
+  const allSpkList = [
+    ...new Set([
+      ...sentences.map((s) => s.spk || 0),
+      ...Object.keys(spkNames).map(Number),
+    ]),
+  ].sort((a, b) => a - b)
 
   const handleCheckChange = useCallback((sentenceIdx, checked) => {
     setCheckedSentences((prev) => {
@@ -114,8 +133,37 @@ export default function CutEditTab({
         {/* 요약 */}
         {(summary || summaryLoading) && (
           <>
-            <div className="px-4 py-2 border-b border-border">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-border">
               <span className="text-xs text-muted-foreground">스크립트 개요</span>
+              {summary && (
+                <button
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => {
+                    const textarea = document.createElement("textarea")
+                    textarea.value = summaryToText(summary)
+                    textarea.style.position = "fixed"
+                    textarea.style.opacity = "0"
+                    document.body.appendChild(textarea)
+                    textarea.select()
+                    document.execCommand("copy")
+                    document.body.removeChild(textarea)
+                    setSummaryCopied(true)
+                    setTimeout(() => setSummaryCopied(false), 1500)
+                  }}
+                >
+                  {summaryCopied ? (
+                    <>
+                      <Check className="h-3 w-3" />
+                      복사됨
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3 w-3" />
+                      복사
+                    </>
+                  )}
+                </button>
+              )}
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
               <SummaryPanel summary={summary} loading={summaryLoading} onSeek={onSummarySeek} />
@@ -143,22 +191,9 @@ export default function CutEditTab({
                     onClick={() => handleBulkSpkChange(spk)}
                   >
                     <span className="inline-block w-2 h-2 rounded-full" style={{ background: spkColors[spk] || spkColors[0] }} />
-                    화자 {spkLabels[spk] || spk + 1}
+                    {spkNames[spk] || `화자 ${spkLabels[spk] || spk + 1}`}
                   </Button>
                 ))}
-                {allSpkList.length < 6 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-xs px-3 text-muted-foreground"
-                    onClick={() => {
-                      const nextSpk = allSpkList.length > 0 ? Math.max(...allSpkList) + 1 : 0
-                      if (nextSpk < 6) setExtraSpkList((prev) => [...prev, nextSpk])
-                    }}
-                  >
-                    + 화자 추가
-                  </Button>
-                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -236,6 +271,7 @@ export default function CutEditTab({
             })
             setCheckedSentences(indices)
           }}
+          spkNames={spkNames}
         />
         </div>
 

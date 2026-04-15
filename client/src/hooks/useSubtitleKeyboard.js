@@ -184,6 +184,30 @@ export default function useSubtitleKeyboard({
     subsSentencesRef.current = newSubs
   }, [focusedWordRef, subsSentencesRef, setSubsSentences, pushUndo])
 
+  // 현재 단어 삭제 (is_deleted 처리)
+  const toggleDeleteWord = useCallback(() => {
+    if (!focusedWordRef.current || !subsSentencesRef.current) return
+    const { sentenceIdx, wordIdx } = focusedWordRef.current
+    const subs = subsSentencesRef.current
+    const sentence = subs[sentenceIdx]
+    if (!sentence) return
+    const word = sentence.words[wordIdx]
+    if (!word) return
+
+    pushUndo()
+    const newSubs = subs.map((s, si) => {
+      if (si !== sentenceIdx) return s
+      return {
+        ...s,
+        words: s.words.map((w, wi) =>
+          wi === wordIdx ? { ...w, is_deleted: !w.is_deleted } : w,
+        ),
+      }
+    })
+    setSubsSentences(newSubs)
+    subsSentencesRef.current = newSubs
+  }, [focusedWordRef, subsSentencesRef, setSubsSentences, pushUndo])
+
   // 현재 위치에서 문장 나누기
   const splitSentence = useCallback(() => {
     if (!focusedWordRef.current || !subsSentencesRef.current) return
@@ -263,6 +287,7 @@ export default function useSubtitleKeyboard({
       if (kc === 78) { mergeWithPrev(); return }
       if (kc === 77) { mergeWithNext(); return }
       if (kc === 13) { splitSentence(); return }
+      if (kc === 75) { toggleDeleteWord(); return }
     }
 
     window.addEventListener("keydown", handleKeyDownCapture, true)
@@ -273,7 +298,7 @@ export default function useSubtitleKeyboard({
       window.removeEventListener("keydown", handleKeyDown)
       window.removeEventListener("keyup", handleKeyUp)
     }
-  }, [activeTab, mergeSentenceWithPrev, mergeWithPrev, mergeWithNext, splitSentence, undo, redo])
+  }, [activeTab, mergeSentenceWithPrev, mergeWithPrev, mergeWithNext, splitSentence, toggleDeleteWord, undo, redo])
 
   return { undo, redo, pushUndo, undoStackRef, redoStackRef }
 }

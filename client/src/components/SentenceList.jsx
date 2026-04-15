@@ -27,6 +27,7 @@ export default function SentenceList({
   checkedSentences,
   onCheckChange,
   onSelectSameSpk,
+  spkNames,
 }) {
   return (
     <div className="flex-1 overflow-y-auto">
@@ -67,6 +68,7 @@ export default function SentenceList({
               isChecked={checkedSentences ? checkedSentences.has(sentenceIdx) : false}
               onCheckChange={onCheckChange}
               onSelectSameSpk={onSelectSameSpk}
+              spkNames={spkNames}
             />
           ))
         ) : (

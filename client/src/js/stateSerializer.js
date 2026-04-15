@@ -24,6 +24,7 @@ export function prepareStateForSave(
   silenceSeconds,
   selectedWordIds,
   timebase,
+  speakers,
 ) {
   // sentences에서 BigInt 필드를 Number(String)로 변환하여 JSON-safe하게 저장
   const cleanSentences = sentences.map((sentence) => ({
@@ -44,6 +45,7 @@ export function prepareStateForSave(
     silence_seconds: silenceSeconds,
     selected_word_ids: Array.from(selectedWordIds),
     timebase: timebase ? String(timebase) : null,
+    speaker: speakers || {},
     saved_at: new Date().toISOString(),
   }
 }
@@ -59,6 +61,7 @@ export function restoreStateFromData(data, audioPath) {
     audioPath: audioPath || null,
     selectedWordIds: new Set(data.selected_word_ids || []),
     timebase: data.timebase ? BigInt(data.timebase) : null,
+    speakers: data.speaker || data.speakers || {},
   }
 }
 

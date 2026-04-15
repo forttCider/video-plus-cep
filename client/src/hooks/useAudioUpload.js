@@ -26,7 +26,12 @@ export default function useAudioUpload({
   const [isCanceled, setIsCanceled] = useState(false)
   const [isError, setIsError] = useState(false)
   const [uploadFile, setUploadFile] = useState(null)
-  const [audioPath, setAudioPath] = useState(null) // 파형 표시용 오디오 경로
+  const [audioPath, setAudioPathState] = useState(null) // 파형 표시용 오디오 경로
+  const audioPathRef = useRef(null)
+  const setAudioPath = (p) => {
+    audioPathRef.current = p
+    setAudioPathState(p)
+  }
   const intervalRef = useRef(null)
   const isCanceledRef = useRef(false) // 🔥 클로저 문제 해결용
   const isErrorRef = useRef(false)
@@ -70,7 +75,9 @@ export default function useAudioUpload({
 
     try {
       // 오디오 렌더링 + ArrayBuffer 읽기
-      const result = await renderAudioAndRead((msg) => addLog && addLog("info", msg))
+      const result = await renderAudioAndRead(
+        (msg) => addLog && addLog("info", msg),
+      )
 
       const { arrayBuffer, audioPath: renderedAudioPath } = result
 
@@ -103,13 +110,18 @@ export default function useAudioUpload({
     const queueUrl = `${API_URL}/transcribe/queue`
     const fileSizeMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(2)
     addLog && addLog("info", `요청 URL: ${queueUrl}`)
-    addLog && addLog("info", `오디오 크기: ${fileSizeMB} MB (${arrayBuffer.byteLength} bytes)`)
+    addLog &&
+      addLog(
+        "info",
+        `오디오 크기: ${fileSizeMB} MB (${arrayBuffer.byteLength} bytes)`,
+      )
     addLog && addLog("info", `화자 수: ${numSpeakersRef?.current || 2}`)
     try {
       // 프로젝트/시퀀스 ID 가져오기 (청크 업로드 시 전달용)
       const documentID = await getProjectDocumentID()
       const seqInfo = await getActiveSequenceInfo()
-      addLog && addLog("info", `documentID: ${documentID}, sequenceID: ${seqInfo?.id}`)
+      addLog &&
+        addLog("info", `documentID: ${documentID}, sequenceID: ${seqInfo?.id}`)
 
       const requestBody = JSON.stringify({
         filename: "audio.wav",
@@ -128,11 +140,20 @@ export default function useAudioUpload({
         })
       } catch (fetchErr) {
         const elapsed = Date.now() - fetchStart
-        addLog && addLog("error", `fetch 실패 (${elapsed}ms): ${fetchErr.name} - ${fetchErr.message}`)
-        addLog && addLog("error", `에러 스택: ${fetchErr.stack || "(스택 없음)"}`)
+        addLog &&
+          addLog(
+            "error",
+            `fetch 실패 (${elapsed}ms): ${fetchErr.name} - ${fetchErr.message}`,
+          )
+        addLog &&
+          addLog("error", `에러 스택: ${fetchErr.stack || "(스택 없음)"}`)
         throw fetchErr
       }
-      addLog && addLog("info", `fetch 응답: status=${response.status} (${Date.now() - fetchStart}ms)`)
+      addLog &&
+        addLog(
+          "info",
+          `fetch 응답: status=${response.status} (${Date.now() - fetchStart}ms)`,
+        )
 
       if (!response.ok) {
         let errorDetail
@@ -154,7 +175,11 @@ export default function useAudioUpload({
       }
 
       const resData = await response.json()
-      addLog && addLog("info", `task_id 발급: ${resData.task_id}, total_chunks: ${resData.total_chunks}`)
+      addLog &&
+        addLog(
+          "info",
+          `task_id 발급: ${resData.task_id}, total_chunks: ${resData.total_chunks}`,
+        )
       currentTaskIdRef.current = resData.task_id // 🔥 현재 taskId 저장
       setUploadFile((prev) =>
         prev ? { ...prev, taskId: resData.task_id } : null,
@@ -173,7 +198,8 @@ export default function useAudioUpload({
       startPolling(resData.task_id)
     } catch (error) {
       console.error("[useAudioUpload] 큐 등록 오류:", error)
-      addLog && addLog("error", `서버 연결 오류: ${error.name} - ${error.message}`)
+      addLog &&
+        addLog("error", `서버 연결 오류: ${error.name} - ${error.message}`)
       isErrorRef.current = true
       setIsError(true)
       setIsUpload(false)
@@ -232,6 +258,11 @@ export default function useAudioUpload({
       if (sequenceId) formData.append("sequence_id", sequenceId)
       if (numSpeakersRef?.current)
         formData.append("spk_count", String(numSpeakersRef.current))
+      addLog &&
+        addLog(
+          "info",
+          `[청크 업로드] chunk_index=${chunkIndex}, spk_count=${numSpeakersRef?.current || "(없음)"}`,
+        )
 
       const response = await fetch(`${API_URL}/transcribe`, {
         method: "POST",
@@ -306,7 +337,7 @@ export default function useAudioUpload({
           await onFinish(taskId)
         }
         // 오디오 파일 정리
-        cleanupAudioFile(audioPath)
+        cleanupAudioFile(audioPathRef.current)
         setIsUpload(false)
         setUploadFile(null)
       }
@@ -339,7 +370,7 @@ export default function useAudioUpload({
       setIsCanceled(true)
       setIsUpload(false)
       setUploadFile(null)
-      cleanupAudioFile(audioPath) // 오디오 파일 정리
+      cleanupAudioFile(audioPathRef.current) // 오디오 파일 정리
       setAudioPath(null) // 🔥 파형 초기화
       clearInterval(intervalRef.current)
       currentTaskIdRef.current = null // 🔥 taskId 초기화

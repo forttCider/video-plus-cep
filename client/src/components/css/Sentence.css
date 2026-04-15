@@ -68,13 +68,9 @@
 .sentence-spk-badge {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-  color: #fff;
+  white-space: nowrap;
 }
 
 .sentence-time {

@@ -24,6 +24,7 @@ export default function useStatePersistence({
   silenceSeconds,
   selectedWordIds,
   timebaseRef,
+  spkNamesRef,
   addLog,
 }) {
   const [isSaving, setIsSaving] = useState(false)
@@ -56,6 +57,7 @@ export default function useStatePersistence({
           overrides.silenceSeconds ?? silenceSeconds,
           overrides.selectedWordIds ?? selectedWordIds,
           timebaseRef.current,
+          overrides.speakers ?? spkNamesRef?.current ?? {},
         )
 
         const payload = {

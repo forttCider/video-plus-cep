@@ -16,7 +16,6 @@ const Sentence = forwardRef(
       sentenceIdx,
       focusedWord,
       currentWordId,
-      currentWordSentenceIdx,
       selectedWordIds = new Set(),
       onWordClick,
       onDeleteSentence,
@@ -36,6 +35,7 @@ const Sentence = forwardRef(
       isChecked = false,
       onCheckChange,
       onSelectSameSpk,
+      spkNames = {},
     },
     ref
   ) => {
@@ -58,7 +58,8 @@ const Sentence = forwardRef(
 
     const spk = sentence.spk || 0;
     const badgeColor = spkBadgeColors[spk] || spkBadgeColors[0];
-    const badgeLabel = spkLabels[spk] || String(spk);
+    const customName = spkNames[spk];
+    const badgeLabel = customName || spkLabels[spk] || String(spk);
 
     const spkStyle = {
       borderLeft: "3px solid " + badgeColor,
@@ -89,7 +90,7 @@ const Sentence = forwardRef(
             <div className="sentence-header-left">
               <span
                 className="sentence-spk-badge"
-                style={{ background: badgeColor }}
+                style={{ color: badgeColor, background: "transparent" }}
               >
                 {badgeLabel}
               </span>
@@ -134,7 +135,7 @@ const Sentence = forwardRef(
                             className="sentence-check-menu-item"
                             onClick={() => { onSelectSameSpk(spk); setMenuOpen(false) }}
                           >
-                            화자 {badgeLabel} 모두 선택
+                            {customName || `화자 ${spkLabels[spk] || spk + 1}`} 모두 선택
                           </button>
                         </div>
                       )}
@@ -150,7 +151,7 @@ const Sentence = forwardRef(
               >
               {spkList.map((s) => (
                 <option key={s} value={s} style={{ background: "#1e1e1e", color: "#fff" }}>
-                  화자 {spkLabels[s] || s + 1}
+                  {spkNames[s] || `화자 ${spkLabels[s] || s + 1}`}
                 </option>
               ))}
             </select>
@@ -203,14 +204,43 @@ const Sentence = forwardRef(
 Sentence.displayName = "Sentence";
 
 export default React.memo(Sentence, (prevProps, nextProps) => {
+  // focusedWord: 이 문장에 영향을 주는 경우만 리렌더
+  const prevFocusedHere = prevProps.focusedWord?.sentenceIdx === prevProps.sentenceIdx;
+  const nextFocusedHere = nextProps.focusedWord?.sentenceIdx === nextProps.sentenceIdx;
+  const focusedChanged = prevFocusedHere || nextFocusedHere
+    ? prevProps.focusedWord?.sentenceIdx !== nextProps.focusedWord?.sentenceIdx ||
+      prevProps.focusedWord?.wordIdx !== nextProps.focusedWord?.wordIdx
+    : false;
+
+  // currentWordId: 이 문장 내 단어에 해당하는지 직접 확인 (subs 모드 대응)
+  const currentChanged = prevProps.currentWordId !== nextProps.currentWordId
+    && (
+      prevProps.sentence?.words?.some((w) => w.start_at === prevProps.currentWordId) ||
+      nextProps.sentence?.words?.some((w) => w.start_at === nextProps.currentWordId)
+    );
+
+  // editingWord: 이 문장에 영향을 주는 경우만 리렌더
+  const prevEditingHere = prevProps.editingWord?.sentenceIdx === prevProps.sentenceIdx;
+  const nextEditingHere = nextProps.editingWord?.sentenceIdx === nextProps.sentenceIdx;
+  const editingChanged = prevEditingHere || nextEditingHere
+    ? prevProps.editingWord?.sentenceIdx !== nextProps.editingWord?.sentenceIdx ||
+      prevProps.editingWord?.wordIdx !== nextProps.editingWord?.wordIdx
+    : false;
+
+  // spkNames: 현재 문장의 화자 이름만 비교 (다른 화자 이름 바뀌어도 영향 없음)
+  const spk = nextProps.sentence?.spk || 0;
+  const spkNameChanged =
+    (prevProps.spkNames?.[spk] || "") !== (nextProps.spkNames?.[spk] || "");
+
   return (
     prevProps.sentence === nextProps.sentence &&
-    prevProps.focusedWord === nextProps.focusedWord &&
-    prevProps.currentWordId === nextProps.currentWordId &&
+    !focusedChanged &&
+    !currentChanged &&
+    !editingChanged &&
     prevProps.selectedWordIds === nextProps.selectedWordIds &&
-    prevProps.editingWord === nextProps.editingWord &&
     prevProps.mode === nextProps.mode &&
     prevProps.isChecked === nextProps.isChecked &&
-    prevProps.silenceThresholdMs === nextProps.silenceThresholdMs
+    prevProps.silenceThresholdMs === nextProps.silenceThresholdMs &&
+    !spkNameChanged
   );
 });

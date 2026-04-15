@@ -1,5 +1,5 @@
 import React from "react"
-import { History, RefreshCw, Undo2, Redo2 } from "lucide-react"
+import { History, RefreshCw, Undo2, Redo2, Download, Users } from "lucide-react"
 import { Button } from "./ui/button"
 
 export default function AppHeader({
@@ -14,6 +14,10 @@ export default function AppHeader({
   isRefreshing,
   onRefresh,
   version,
+  onOpenDownload,
+  canDownload,
+  onOpenSpeakers,
+  canEditSpeakers,
 }) {
   return (
     <div className="flex items-center justify-between py-2 px-4 border-b border-border">
@@ -78,8 +82,28 @@ export default function AppHeader({
         </Button>
       </div>
 
-      {/* Right: version + connection + refresh */}
+      {/* Right: download + version + connection + refresh */}
       <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          onClick={onOpenSpeakers}
+          disabled={!canEditSpeakers}
+          title="화자 이름 지정"
+        >
+          <Users className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          onClick={onOpenDownload}
+          disabled={!canDownload}
+          title="다운로드"
+        >
+          <Download className="h-3.5 w-3.5" />
+        </Button>
         {version && (
           <span className="text-[11px] text-muted-foreground">v{version}</span>
         )}

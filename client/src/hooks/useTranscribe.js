@@ -1,5 +1,4 @@
 import { useCallback } from "react"
-import { nodeGet } from "../js/nodeFetch"
 import {
   getActiveSequenceInfo,
   getSequenceFramerate,
@@ -135,16 +134,19 @@ export default function useTranscribe({
         })
         addLog("info", "편집 상태 저장 완료")
 
-        // 요약본 불러오기 (백그라운드, Node.js https — Chromium 소켓 풀 독립)
+        // 요약본 불러오기 (백그라운드)
         setSummaryLoading(true)
-        nodeGet(`${API_URL}/transcribe/summary/${taskId}`)
+        addLog("info", `요약본 API 요청 시작 (taskId: ${taskId}, spk_count: ${numSpeakersRef?.current || 2})`)
+        fetch(`${API_URL}/transcribe/summary/${taskId}?spk_count=${numSpeakersRef?.current || 2}`)
+          .then((res) => res.json())
           .then((data) => {
+            addLog("info", `요약본 API 응답 수신 (data: ${data ? JSON.stringify(data).slice(0, 200) : "null"})`)
             if (data) {
               setSummary(data)
               addLog("info", "요약본 불러오기 완료")
             }
           })
-          .catch(() => addLog("warn", "요약본 불러오기 실패"))
+          .catch((e) => addLog("warn", `요약본 불러오기 실패: ${e.message}`))
           .finally(() => setSummaryLoading(false))
       } catch (e) {
         setStatus("결과 가져오기 실패: " + e.message)

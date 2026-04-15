@@ -3,7 +3,6 @@ import { RefreshCw } from "lucide-react"
 import { Button } from "./ui/button"
 import { Card, CardContent } from "./ui/card"
 import AppHeader from "./AppHeader"
-import { nodeGet, abortNodeRequest } from "../js/nodeFetch"
 
 import BatchProgress from "./BatchProgress"
 import LogPanel from "./LogPanel"
@@ -20,6 +19,9 @@ import {
 import BackupHistoryDialog from "./BackupHistoryDialog"
 import RestoreConfirmDialog from "./RestoreConfirmDialog"
 import ProcessingModal from "./ProcessingModal"
+import DownloadDialog from "./DownloadDialog"
+import SpeakerNameDialog from "./SpeakerNameDialog"
+import SavedStateBanner from "./SavedStateBanner"
 import { splitForSubtitles } from "../js/subtitleSplitter"
 import {
   getActiveSequenceInfo,
@@ -56,15 +58,6 @@ function formatBackupName() {
 }
 
 export default function App() {
-  // === 패널 닫힘 시 진행 중 요청 중단 ===
-  useEffect(() => {
-    const handler = () => {
-      abortNodeRequest()
-    }
-    window.addEventListener("beforeunload", handler)
-    return () => window.removeEventListener("beforeunload", handler)
-  }, [])
-
   // === States ===
   const [sequenceInfo, setSequenceInfo] = useState(null)
   const [numSpeakers, setNumSpeakers] = useState(2)
@@ -78,6 +71,11 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [batchProgress, setBatchProgress] = useState(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [showDownload, setShowDownload] = useState(false)
+  const [showSpeakers, setShowSpeakers] = useState(false)
+  const [spkNames, setSpkNames] = useState({})
+  const spkNamesRef = useRef({})
+  const loadedSequenceIdRef = useRef(null)
   const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const [selectedWordIds, setSelectedWordIds] = useState(new Set())
   const [backupList, setBackupList] = useState([])
@@ -166,6 +164,7 @@ export default function App() {
       silenceSeconds,
       selectedWordIds,
       timebaseRef,
+      spkNamesRef,
       addLog,
     })
 
@@ -260,12 +259,13 @@ export default function App() {
 
   // === Keyboard ===
   const navSentencesRef = activeTab === "subs" ? subsSentencesRef : sentencesRef
+  const navWordRefs = activeTab === "subs" ? subsWordRefs : wordRefs
   const { handleKeyDown } = useKeyboardNavigation({
     sentencesRef: navSentencesRef,
     focusedWord,
     setFocusedWord,
     setSelectedWordIds,
-    wordRefs,
+    wordRefs: navWordRefs,
     isSilenceHidden,
   })
 
@@ -277,7 +277,7 @@ export default function App() {
       window.removeEventListener("keydown", onKey)
       window.removeEventListener("keyup", onKey)
     }
-  }, [focusedWord])
+  }, [focusedWord, activeTab])
 
   const activeTabRef = useRef(activeTab)
   activeTabRef.current = activeTab
@@ -333,18 +333,28 @@ export default function App() {
     await setPlayerPosition(timelineTime)
     // 해당 위치의 단어 찾아서 포커스 + 스크롤
     if (timelineIndexRef.current) {
-      const found = findCurrentWordFromIndex(timelineIndexRef.current, timelineTime)
+      const found = findCurrentWordFromIndex(
+        timelineIndexRef.current,
+        timelineTime,
+      )
       if (found?.word) {
-        let sIdx = -1, wIdx = -1
+        let sIdx = -1,
+          wIdx = -1
         sentencesRef.current.forEach((s, si) => {
           s.words?.forEach((w, wi) => {
-            if (w.start_at === found.word.start_at) { sIdx = si; wIdx = wi }
+            if (w.start_at === found.word.start_at) {
+              sIdx = si
+              wIdx = wi
+            }
           })
         })
         if (sIdx >= 0) {
           setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
           setCurrentWordId(found.word.start_at)
-          wordRefs.current[found.word.start_at]?.scrollIntoView({ behavior: "instant", block: "center" })
+          wordRefs.current[found.word.start_at]?.scrollIntoView({
+            behavior: "instant",
+            block: "center",
+          })
         }
       }
     }
@@ -391,6 +401,7 @@ export default function App() {
     })
     if (sIdx === -1) return
     setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
+    setCurrentWordId(word.start_at)
     focusTrapRef.current?.focus()
     const result = getTimelinePositionTick(word, sentencesRef.current)
     if (result?.startTick !== undefined) {
@@ -478,28 +489,22 @@ export default function App() {
     }
   }, [addLog, saveSubtitleData])
 
-  const handleChangeSpkCut = useCallback(
-    (sentenceIdx, newSpk) => {
-      setSentences((prev) => {
-        const next = [...prev]
-        next[sentenceIdx] = { ...next[sentenceIdx], spk: newSpk }
-        return next
-      })
-    },
-    [],
-  )
+  const handleChangeSpkCut = useCallback((sentenceIdx, newSpk) => {
+    setSentences((prev) => {
+      const next = [...prev]
+      next[sentenceIdx] = { ...next[sentenceIdx], spk: newSpk }
+      return next
+    })
+  }, [])
 
-  const handleChangeSpkSubs = useCallback(
-    (sentenceIdx, newSpk) => {
-      setSubsSentences((prev) => {
-        const next = [...prev]
-        next[sentenceIdx] = { ...next[sentenceIdx], spk: newSpk }
-        subsSentencesRef.current = next
-        return next
-      })
-    },
-    [],
-  )
+  const handleChangeSpkSubs = useCallback((sentenceIdx, newSpk) => {
+    setSubsSentences((prev) => {
+      const next = [...prev]
+      next[sentenceIdx] = { ...next[sentenceIdx], spk: newSpk }
+      subsSentencesRef.current = next
+      return next
+    })
+  }, [])
 
   const {
     undo: subsUndo,
@@ -556,7 +561,10 @@ export default function App() {
     audioPath: uploadedAudioPath,
   } = useAudioUpload({
     numSpeakersRef,
-    onFinish: handleTranscribeFinish,
+    onFinish: async (taskId) => {
+      await handleTranscribeFinish(taskId)
+      loadedSequenceIdRef.current = sequenceInfo?.id
+    },
     onClose: () => {
       setStatus("취소됨")
       resetAllState()
@@ -572,6 +580,8 @@ export default function App() {
       setPeaksDuration(null)
       setAudioPath(null)
       setSummary(null)
+      setSpkNames({})
+      spkNamesRef.current = {}
       sentencesRef.current = []
       timelineIndexRef.current = null
       // 백그라운드로 시퀀스 복제
@@ -600,6 +610,7 @@ export default function App() {
       setStatus("이전 편집 상태 불러오는 중...")
       const savedState = await loadState()
       if (savedState && savedState.sentences?.length > 0) {
+        loadedSequenceIdRef.current = sequenceInfo?.id
         const framerateInfo = await getSequenceFramerate()
         if (framerateInfo.timebase)
           timebaseRef.current = BigInt(framerateInfo.timebase)
@@ -625,6 +636,13 @@ export default function App() {
         setOriginalSpkList(
           [...new Set(gapSentences.map((s) => s.spk || 0))].sort(),
         )
+        if (
+          savedState.speakers &&
+          Object.keys(savedState.speakers).length > 0
+        ) {
+          setSpkNames(savedState.speakers)
+          spkNamesRef.current = savedState.speakers
+        }
         const subtitleData = savedState.subtitleData
         if (subtitleData) {
           setSubsSentences(subtitleData.sentences)
@@ -633,20 +651,36 @@ export default function App() {
           addLog("info", "자막 편집 데이터 복원됨")
         }
         // 요약본: 불러오기 데이터에 포함되면 바로 사용, 없으면 task_id로 API 호출
+        addLog(
+          "info",
+          `[불러오기] summaryData: ${savedState.summaryData ? "있음" : "없음"}, taskId: ${savedState.taskId || "없음"}`,
+        )
         if (savedState.summaryData) {
           setSummary(savedState.summaryData)
           addLog("info", "요약본 복원됨")
         } else if (savedState.taskId) {
           setSummaryLoading(true)
-          addLog("info", "요약본 API 요청 중...")
-          nodeGet(`https://vapi.cidermics.com/transcribe/summary/${savedState.taskId}`)
+          addLog(
+            "info",
+            `[불러오기] 요약본 API 요청 시작 (taskId: ${savedState.taskId}, spk_count: ${numSpeakersRef.current || 2})`,
+          )
+          fetch(
+            `https://vapi.cidermics.com/transcribe/summary/${savedState.taskId}?spk_count=${numSpeakersRef.current || 2}`,
+          )
+            .then((res) => res.json())
             .then((data) => {
+              addLog(
+                "info",
+                `[불러오기] 요약본 API 응답 수신 (data: ${data ? JSON.stringify(data).slice(0, 200) : "null"})`,
+              )
               if (data) {
                 setSummary(data)
                 addLog("info", "요약본 불러오기 완료")
               }
             })
-            .catch(() => addLog("warn", "요약본 불러오기 실패"))
+            .catch((e) =>
+              addLog("warn", `[불러오기] 요약본 불러오기 실패: ${e.message}`),
+            )
             .finally(() => setSummaryLoading(false))
         }
       } else {
@@ -694,6 +728,9 @@ export default function App() {
           e.target.tagName !== "SELECT"
         ) {
           focusTrapRef.current?.focus()
+          if (!e.target.closest(".word")) {
+            setFocusedWord(null)
+          }
         }
       }}
     >
@@ -724,7 +761,10 @@ export default function App() {
 
       <AppHeader
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={(tab) => {
+          setFocusedWord(null)
+          setActiveTab(tab)
+        }}
         onOpenHistory={handleOpenHistory}
         onUndo={subsUndo}
         onRedo={subsRedo}
@@ -734,6 +774,10 @@ export default function App() {
         isRefreshing={isRefreshing}
         onRefresh={loadSequenceInfo}
         version={getExtensionVersion()}
+        onOpenDownload={() => setShowDownload(true)}
+        canDownload={sentences.length > 0}
+        onOpenSpeakers={() => setShowSpeakers(true)}
+        canEditSpeakers={sentences.length > 0}
       />
 
       <LogPanel
@@ -746,6 +790,21 @@ export default function App() {
         <div className="px-4">
           <BatchProgress batchProgress={batchProgress} />
         </div>
+
+        {/* 다른 시퀀스의 저장된 상태가 있으면 배너 표시 */}
+        {sentences.length > 0 &&
+          sequenceInfo?.id &&
+          sequenceInfo.id !== loadedSequenceIdRef.current &&
+          !isRefreshing && (
+            <div className="px-4 pt-2">
+              <SavedStateBanner
+                hasSavedState={hasSavedState}
+                isUpload={isUpload}
+                isRestoring={isRestoring}
+                onLoad={handleLoadSavedState}
+              />
+            </div>
+          )}
 
         {/* 받아쓰기 전 */}
         {sentences.length === 0 && (
@@ -775,84 +834,90 @@ export default function App() {
         )}
 
         {/* 컷편집 탭 */}
-        <div className={`flex flex-col flex-1 min-h-0 ${sentences.length === 0 || activeTab !== "cut" ? "hidden" : ""}`}>
-            <CutEditTab
-              silenceSeconds={silenceSeconds}
-              onSilenceChange={setSilenceSeconds}
-              onTranscribe={onClickRenderAudio}
-              isUpload={isUpload}
-              isConnected={isConnected}
-              isProcessing={isProcessing}
-              sentences={sentences}
-              allSilenceSelected={allSilenceSelected}
-              allFillerSelected={allFillerSelected}
-              silenceCount={silenceWordIds.size}
-              fillerCount={fillerWordIds.size}
-              onSelectSilence={handleSelectSilence}
-              onSelectFiller={handleSelectFiller}
-              numSpeakers={numSpeakers}
-              onNumSpeakersChange={(val) => {
-                setNumSpeakers(val)
-                numSpeakersRef.current = val
-              }}
-              summary={summary}
-              summaryLoading={summaryLoading}
-              focusedWord={focusedWord}
-              currentWordId={currentWordId}
-              currentWordSentenceIdx={currentWordSentenceIdx}
-              selectedWordIds={selectedWordIds}
-              searchResultsSet={searchResultsSet}
-              currentSearchWordId={currentSearchWordId}
-              silenceThresholdMs={silenceThresholdMs}
-              wordRefs={wordRefs}
-              onWordClick={handleWordClick}
-              onDeleteSentence={handleDeleteSentence}
-              setFocusedWord={setFocusedWord}
-              onChangeSpk={handleChangeSpkCut}
-              onApply={handleApplySelected}
-              onSummarySeek={handleSummarySeek}
-              audioPath={audioPath}
-              peaks={peaks}
-              peaksDuration={peaksDuration}
-              currentTime={currentTime}
-              isPlayingState={isPlayingState}
-              onWordTimeChange={handleWordTimeChange}
-              onWaveformSeek={handleWaveformSeek}
-            />
+        <div
+          className={`flex flex-col flex-1 min-h-0 ${sentences.length === 0 || activeTab !== "cut" ? "hidden" : ""}`}
+        >
+          <CutEditTab
+            silenceSeconds={silenceSeconds}
+            onSilenceChange={setSilenceSeconds}
+            onTranscribe={onClickRenderAudio}
+            isUpload={isUpload}
+            isConnected={isConnected}
+            isProcessing={isProcessing}
+            sentences={sentences}
+            allSilenceSelected={allSilenceSelected}
+            allFillerSelected={allFillerSelected}
+            silenceCount={silenceWordIds.size}
+            fillerCount={fillerWordIds.size}
+            onSelectSilence={handleSelectSilence}
+            onSelectFiller={handleSelectFiller}
+            numSpeakers={numSpeakers}
+            onNumSpeakersChange={(val) => {
+              setNumSpeakers(val)
+              numSpeakersRef.current = val
+            }}
+            summary={summary}
+            summaryLoading={summaryLoading}
+            focusedWord={activeTab === "cut" ? focusedWord : null}
+            currentWordId={currentWordId}
+            currentWordSentenceIdx={currentWordSentenceIdx}
+            selectedWordIds={selectedWordIds}
+            searchResultsSet={searchResultsSet}
+            currentSearchWordId={currentSearchWordId}
+            silenceThresholdMs={silenceThresholdMs}
+            wordRefs={wordRefs}
+            onWordClick={handleWordClick}
+            onDeleteSentence={handleDeleteSentence}
+            setFocusedWord={setFocusedWord}
+            onChangeSpk={handleChangeSpkCut}
+            onApply={handleApplySelected}
+            onSummarySeek={handleSummarySeek}
+            audioPath={audioPath}
+            peaks={peaks}
+            peaksDuration={peaksDuration}
+            currentTime={currentTime}
+            isPlayingState={isPlayingState}
+            onWordTimeChange={handleWordTimeChange}
+            onWaveformSeek={handleWaveformSeek}
+            spkNames={spkNames}
+          />
         </div>
 
         {/* 자막편집 탭 */}
-        <div className={`flex flex-col flex-1 min-h-0 ${sentences.length === 0 || activeTab !== "subs" ? "hidden" : ""}`}>
-            <SubtitleEditTab
-              sentences={sentences}
-              subsSentences={subsSentences}
-              setSubsSentences={setSubsSentences}
-              subsSentencesRef={subsSentencesRef}
-              originalSpkList={originalSpkList}
-              setSentences={setSentences}
-              subsMaxWords={subsMaxWords}
-              setSubsMaxWords={setSubsMaxWords}
-              focusedWord={focusedWord}
-              currentWordId={currentWordId}
-              currentWordSentenceIdx={currentWordSentenceIdx}
-              selectedWordIds={selectedWordIds}
-              searchResultsSet={searchResultsSet}
-              currentSearchWordId={currentSearchWordId}
-              silenceThresholdMs={silenceThresholdMs}
-              wordRefs={subsWordRefs}
-              onWordClick={handleWordClick}
-              onDeleteSentence={handleDeleteSentence}
-              setFocusedWord={setFocusedWord}
-              isUpload={isUpload}
-              onChangeSpk={handleChangeSpkSubs}
-              editingWord={editingWord}
-              onStartEditing={handleStartEditing}
-              onWordTextUpdate={handleWordTextUpdate}
-              onWordEditingEnd={() => setEditingWord(null)}
-              handleCaptionClick={handleCaptionClick}
-              isConnected={isConnected}
-              pushUndo={subsPushUndo}
-            />
+        <div
+          className={`flex flex-col flex-1 min-h-0 ${sentences.length === 0 || activeTab !== "subs" ? "hidden" : ""}`}
+        >
+          <SubtitleEditTab
+            sentences={sentences}
+            subsSentences={subsSentences}
+            setSubsSentences={setSubsSentences}
+            subsSentencesRef={subsSentencesRef}
+            originalSpkList={originalSpkList}
+            setSentences={setSentences}
+            subsMaxWords={subsMaxWords}
+            setSubsMaxWords={setSubsMaxWords}
+            focusedWord={activeTab === "subs" ? focusedWord : null}
+            currentWordId={currentWordId}
+            currentWordSentenceIdx={currentWordSentenceIdx}
+            selectedWordIds={selectedWordIds}
+            searchResultsSet={searchResultsSet}
+            currentSearchWordId={currentSearchWordId}
+            silenceThresholdMs={silenceThresholdMs}
+            wordRefs={subsWordRefs}
+            onWordClick={handleWordClick}
+            onDeleteSentence={handleDeleteSentence}
+            setFocusedWord={setFocusedWord}
+            isUpload={isUpload}
+            onChangeSpk={handleChangeSpkSubs}
+            editingWord={editingWord}
+            onStartEditing={handleStartEditing}
+            onWordTextUpdate={handleWordTextUpdate}
+            onWordEditingEnd={() => setEditingWord(null)}
+            handleCaptionClick={handleCaptionClick}
+            isConnected={isConnected}
+            pushUndo={subsPushUndo}
+            spkNames={spkNames}
+          />
         </div>
 
         <BackupHistoryDialog
@@ -861,6 +926,41 @@ export default function App() {
           backupList={backupList}
           isLoading={isLoadingHistory}
           onBackupClick={handleBackupClick}
+        />
+        <DownloadDialog
+          open={showDownload}
+          onClose={() => setShowDownload(false)}
+          subsSentences={subsSentences}
+          summary={summary}
+          spkNames={spkNames}
+          addLog={addLog}
+        />
+        <SpeakerNameDialog
+          open={showSpeakers}
+          onClose={() => setShowSpeakers(false)}
+          initialSpeakers={[
+            ...new Set([
+              ...originalSpkList,
+              ...sentences.map((s) => s.spk || 0),
+              ...subsSentences.map((s) => s.spk || 0),
+              ...Object.keys(spkNames).map(Number),
+            ]),
+          ]
+            .sort((a, b) => a - b)
+            .map((id) => ({ id, name: spkNames[id] || "" }))}
+          usedSpkIds={
+            new Set([
+              ...sentences.map((s) => s.spk || 0),
+              ...subsSentences.map((s) => s.spk || 0),
+            ])
+          }
+          onSave={(list) => {
+            const next = {}
+            for (const s of list) next[s.id] = s.name
+            setSpkNames(next)
+            spkNamesRef.current = next
+            saveState({ speakers: next })
+          }}
         />
         <RestoreConfirmDialog
           restoreConfirm={restoreConfirm}
