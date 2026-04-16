@@ -289,7 +289,11 @@ function getFFmpegPath() {
   const path = require("path")
   const cs = getCSInterface()
   const ext = process.platform === "win32" ? ".exe" : ""
-  return path.join(cs.getSystemPath(SystemPath.EXTENSION), "bin", "ffmpeg" + ext)
+  return path.join(
+    cs.getSystemPath(SystemPath.EXTENSION),
+    "bin",
+    "ffmpeg" + ext,
+  )
 }
 
 /**
@@ -298,7 +302,8 @@ function getFFmpegPath() {
 function ensureFFmpegExecutable(ffmpegPath) {
   const { execSync } = require("child_process")
   const fs = require("fs")
-  if (!fs.existsSync(ffmpegPath)) throw new Error(`ffmpeg not found: ${ffmpegPath}`)
+  if (!fs.existsSync(ffmpegPath))
+    throw new Error(`ffmpeg not found: ${ffmpegPath}`)
   if (process.platform === "darwin") {
     // 현재 권한 확인
     const stats = fs.statSync(ffmpegPath)
@@ -310,10 +315,14 @@ function ensureFFmpegExecutable(ffmpegPath) {
     } catch (e) {}
 
     if (!isExecutable) {
-      try { execSync(`chmod +x "${ffmpegPath}"`) } catch (e) {}
+      try {
+        execSync(`chmod +x "${ffmpegPath}"`)
+      } catch (e) {}
     }
     if (hasQuarantine) {
-      try { execSync(`xattr -dr com.apple.quarantine "${ffmpegPath}"`) } catch (e) {}
+      try {
+        execSync(`xattr -dr com.apple.quarantine "${ffmpegPath}"`)
+      } catch (e) {}
     }
   }
 }
@@ -337,10 +346,14 @@ function extractAndMergeAudio(clips, ffmpegPath, outputPath) {
     // 고유 입력 파일 목록
     const inputFiles = [...new Set(clips.map((c) => c.mediaPath))]
     const inputIndexMap = {}
-    inputFiles.forEach((f, i) => { inputIndexMap[f] = i })
+    inputFiles.forEach((f, i) => {
+      inputIndexMap[f] = i
+    })
 
     // -i 플래그
-    inputFiles.forEach((f) => { args.push("-i", f) })
+    inputFiles.forEach((f) => {
+      args.push("-i", f)
+    })
 
     // 트랙별로 클립 그룹핑
     const trackGroups = {}
@@ -355,14 +368,18 @@ function extractAndMergeAudio(clips, ffmpegPath, outputPath) {
     let labelIdx = 0
 
     trackIndices.forEach((trackIdx) => {
-      const trackClips = trackGroups[trackIdx].sort((a, b) => a.startInSeq - b.startInSeq)
+      const trackClips = trackGroups[trackIdx].sort(
+        (a, b) => a.startInSeq - b.startInSeq,
+      )
 
       if (trackClips.length === 1) {
         // 클립 1개: atrim만
         const clip = trackClips[0]
         const inputIdx = inputIndexMap[clip.mediaPath]
         const label = `t${trackIdx}`
-        filters.push(`[${inputIdx}:a]atrim=start=${clip.inPoint}:end=${clip.outPoint},asetpts=PTS-STARTPTS[${label}]`)
+        filters.push(
+          `[${inputIdx}:a]atrim=start=${clip.inPoint}:end=${clip.outPoint},asetpts=PTS-STARTPTS[${label}]`,
+        )
         trackLabels.push(`[${label}]`)
       } else {
         // 클립 여러 개: 각각 atrim 후 concat
@@ -370,11 +387,15 @@ function extractAndMergeAudio(clips, ffmpegPath, outputPath) {
         trackClips.forEach((clip) => {
           const inputIdx = inputIndexMap[clip.mediaPath]
           const label = `a${labelIdx++}`
-          filters.push(`[${inputIdx}:a]atrim=start=${clip.inPoint}:end=${clip.outPoint},asetpts=PTS-STARTPTS[${label}]`)
+          filters.push(
+            `[${inputIdx}:a]atrim=start=${clip.inPoint}:end=${clip.outPoint},asetpts=PTS-STARTPTS[${label}]`,
+          )
           clipLabels.push(`[${label}]`)
         })
         const trackLabel = `t${trackIdx}`
-        filters.push(`${clipLabels.join("")}concat=n=${trackClips.length}:v=0:a=1[${trackLabel}]`)
+        filters.push(
+          `${clipLabels.join("")}concat=n=${trackClips.length}:v=0:a=1[${trackLabel}]`,
+        )
         trackLabels.push(`[${trackLabel}]`)
       }
     })
@@ -383,7 +404,9 @@ function extractAndMergeAudio(clips, ffmpegPath, outputPath) {
     if (trackLabels.length === 1) {
       filters.push(`${trackLabels[0]}acopy[out]`)
     } else {
-      filters.push(`${trackLabels.join("")}amix=inputs=${trackLabels.length}:duration=longest:normalize=0[out]`)
+      filters.push(
+        `${trackLabels.join("")}amix=inputs=${trackLabels.length}:duration=longest:normalize=0[out]`,
+      )
     }
 
     args.push("-filter_complex", filters.join(";"))
@@ -392,13 +415,18 @@ function extractAndMergeAudio(clips, ffmpegPath, outputPath) {
     args.push("-ac", "1")
     args.push("-y", outputPath)
 
-    execFile(ffmpegPath, args, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error(stderr || err.message))
-      } else {
-        resolve(outputPath)
-      }
-    })
+    execFile(
+      ffmpegPath,
+      args,
+      { maxBuffer: 50 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          reject(new Error(stderr || err.message))
+        } else {
+          resolve(outputPath)
+        }
+      },
+    )
   })
 }
 
@@ -421,21 +449,114 @@ function mixAudioFiles(inputPaths, ffmpegPath, outputPath) {
 
   return new Promise((resolve, reject) => {
     const args = []
-    inputPaths.forEach((f) => { args.push("-i", f) })
+    inputPaths.forEach((f) => {
+      args.push("-i", f)
+    })
 
     if (inputPaths.length === 1) {
       // 트랙 1개면 그냥 복사
       args.push("-c", "copy", "-y", outputPath)
     } else {
       // 여러 트랙 amix 믹싱
-      args.push("-filter_complex", `amix=inputs=${inputPaths.length}:duration=longest:normalize=0`)
+      args.push(
+        "-filter_complex",
+        `amix=inputs=${inputPaths.length}:duration=longest:normalize=0`,
+      )
       args.push("-ar", "48000", "-ac", "1", "-y", outputPath)
     }
 
-    execFile(ffmpegPath, args, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) reject(new Error(stderr || err.message))
-      else resolve(outputPath)
+    execFile(
+      ffmpegPath,
+      args,
+      { maxBuffer: 50 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) reject(new Error(stderr || err.message))
+        else resolve(outputPath)
+      },
+    )
+  })
+}
+
+/**
+ * ffmpeg agate로 트랙별 노이즈 게이팅 (크로스토크/블리드 제거)
+ * 특정 볼륨 이하를 무음 처리하여 해당 화자만 남김
+ */
+function gateAudioTracks(inputPaths, ffmpegPath, outputDir) {
+  const { execFile } = require("child_process")
+  const path = require("path")
+
+  const results = []
+  let chain = Promise.resolve()
+
+  inputPaths.forEach((inputPath, i) => {
+    chain = chain.then(() => {
+      return new Promise((resolve, reject) => {
+        const ext = path.extname(inputPath) || ".wav"
+        const outputPath = path.join(outputDir, `gated_${i}${ext}`)
+        const gateFilter = "agate=threshold=0.03:ratio=9000:attack=1:release=500"
+        const args = [
+          "-i", inputPath,
+          "-af", gateFilter,
+          "-y", outputPath,
+        ]
+        execFile(ffmpegPath, args, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+          if (err) {
+            reject(new Error(`gate track ${i} 실패: ${stderr || err.message}`))
+          } else {
+            results.push(outputPath)
+            resolve()
+          }
+        })
+      })
     })
+  })
+
+  return chain.then(() => results)
+}
+
+/**
+ * ffmpeg amerge로 멀티채널 WAV 생성 (각 트랙 = 1채널, 화자 분리용)
+ * 트랙 2개 → 스테레오, 3개 이상 → 멀티채널
+ */
+function createMultiChannelAudio(inputPaths, ffmpegPath, outputPath) {
+  const { execFile } = require("child_process")
+
+  return new Promise((resolve, reject) => {
+    if (inputPaths.length < 2) {
+      reject(new Error("amerge는 2개 이상의 트랙 필요"))
+      return
+    }
+    const args = []
+    inputPaths.forEach((f) => {
+      args.push("-i", f)
+    })
+
+    // 각 트랙을 모노로 다운믹스 후 amerge로 N채널 WAV 생성
+    const monoFilters = inputPaths
+      .map((_, i) => `[${i}:a]pan=mono|c0=0.5*c0+0.5*c1[m${i}]`)
+      .join(";")
+    const mergeInputs = inputPaths.map((_, i) => `[m${i}]`).join("")
+    const filterComplex = `${monoFilters};${mergeInputs}amerge=inputs=${inputPaths.length}[a]`
+    args.push("-filter_complex", filterComplex)
+    args.push("-map", "[a]")
+    args.push(
+      "-ac",
+      String(inputPaths.length),
+      "-ar",
+      "48000",
+      "-y",
+      outputPath,
+    )
+
+    execFile(
+      ffmpegPath,
+      args,
+      { maxBuffer: 50 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) reject(new Error(stderr || err.message))
+        else resolve(outputPath)
+      },
+    )
   })
 }
 
@@ -448,14 +569,20 @@ export async function renderAudioAndRead(log) {
   const path = require("path")
   const os = require("os")
   const fs = require("fs")
-  const _log = (msg) => { log && log(msg) }
+  const _log = (msg) => {
+    log && log(msg)
+  }
 
   try {
     // 1. 트랙별 개별 렌더링
     _log("트랙별 오디오 렌더링 시작...")
     const trackResult = await renderAudioPerTrack()
 
-    if (!trackResult.success || !trackResult.tracks || trackResult.tracks.length === 0) {
+    if (
+      !trackResult.success ||
+      !trackResult.tracks ||
+      trackResult.tracks.length === 0
+    ) {
       throw new Error(trackResult.error || "트랙 렌더링 실패")
     }
 
@@ -470,14 +597,21 @@ export async function renderAudioAndRead(log) {
     // 디버그용 사본 폴더 (타임스탬프별)
     const ts = new Date().toISOString().replace(/[:.]/g, "-")
     const debugDir = path.join(homeDir, ".videoPlus", "debug", ts)
-    try { fs.mkdirSync(debugDir, { recursive: true }) } catch (e) {}
+    try {
+      fs.mkdirSync(debugDir, { recursive: true })
+    } catch (e) {}
 
     // 트랙별 사본 저장 (확인용)
     trackPaths.forEach((p, i) => {
       try {
-        const dest = path.join(debugDir, `track_${i + 1}${path.extname(p) || ".wav"}`)
+        const dest = path.join(
+          debugDir,
+          `track_${i + 1}${path.extname(p) || ".wav"}`,
+        )
         fs.copyFileSync(p, dest)
-      } catch (e) { _log("트랙 사본 저장 실패: " + e.message) }
+      } catch (e) {
+        _log("트랙 사본 저장 실패: " + e.message)
+      }
     })
     _log("트랙별 사본 저장: " + debugDir)
 
@@ -503,11 +637,42 @@ export async function renderAudioAndRead(log) {
       const mixedDest = path.join(debugDir, "mixed.wav")
       fs.copyFileSync(outputPath, mixedDest)
       _log("믹싱 사본 저장: " + mixedDest)
-    } catch (e) { _log("믹싱 사본 저장 실패: " + e.message) }
+    } catch (e) {
+      _log("믹싱 사본 저장 실패: " + e.message)
+    }
+
+    // 멀티채널 WAV 추가 생성 (게이팅 → amerge, 트랙 2개 이상일 때만)
+    // if (trackPaths.length >= 2) {
+    //   try {
+    //     const multiChannelDir = path.join(homeDir, ".videoPlus", "multichannel")
+    //     try { fs.mkdirSync(multiChannelDir, { recursive: true }) } catch (e) {}
+    //     const ffmpegPath = getFFmpegPath()
+    //     ensureFFmpegExecutable(ffmpegPath)
+    //
+    //     // 1) 게이팅: 크로스토크/블리드 제거
+    //     const gatedDir = path.join(debugDir, "gated")
+    //     try { fs.mkdirSync(gatedDir, { recursive: true }) } catch (e) {}
+    //     _log("멀티채널용 게이팅 시작: " + trackPaths.length + "개 트랙")
+    //     const gatedPaths = await gateAudioTracks(trackPaths, ffmpegPath, gatedDir)
+    //     _log("게이팅 완료: " + gatedDir)
+    //
+    //     // 2) 게이팅된 트랙으로 멀티채널 WAV 생성
+    //     const multiChannelPath = path.join(
+    //       multiChannelDir,
+    //       `multichannel_${ts}_${trackPaths.length}ch.wav`,
+    //     )
+    //     await createMultiChannelAudio(gatedPaths, ffmpegPath, multiChannelPath)
+    //     _log(`멀티채널(${trackPaths.length}ch) 저장: ${multiChannelPath}`)
+    //   } catch (e) {
+    //     _log("멀티채널 생성 실패: " + e.message)
+    //   }
+    // }
 
     // 3. 트랙별 임시 파일 정리
     trackPaths.forEach((p) => {
-      try { if (p !== outputPath) fs.unlinkSync(p) } catch (e) {}
+      try {
+        if (p !== outputPath) fs.unlinkSync(p)
+      } catch (e) {}
     })
 
     // 4. ArrayBuffer로 읽기
@@ -643,7 +808,9 @@ export async function saveWordsData(backupId, sentences) {
 export async function loadWordsData(backupId, seqId) {
   try {
     // 백업 시퀀스의 sequenceId 찾기
-    const backupSeqResult = await evalJSON(`getBackupSequenceId("${backupId}"${seqId ? ', "' + seqId + '"' : ""})`)
+    const backupSeqResult = await evalJSON(
+      `getBackupSequenceId("${backupId}"${seqId ? ', "' + seqId + '"' : ""})`,
+    )
     if (!backupSeqResult?.success) {
       console.error(
         "[loadWordsData] 백업 시퀀스 찾기 실패:",

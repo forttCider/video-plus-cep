@@ -7,6 +7,7 @@ export default function useKeyboardNavigation({
   setSelectedWordIds,
   wordRefs,
   isSilenceHidden,
+  activeTabRef,
 }) {
   const handleKey = (e) => {
     if ((e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") && !e.target.dataset.focusTrap) return
@@ -215,6 +216,8 @@ export default function useKeyboardNavigation({
     }
 
     if (isK) {
+      // 자막편집 탭에서는 useSubtitleKeyboard가 K를 처리 — cut 핸들러는 무시
+      if (activeTabRef?.current === "subs") return
       e.preventDefault()
       if (!focusedWord) {
         if (sentences[0]?.words?.length > 0)

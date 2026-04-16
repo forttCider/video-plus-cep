@@ -6,10 +6,13 @@ import { splitForSubtitles } from "../js/subtitleSplitter"
 
 const spkLabels = ["A", "B", "C", "D", "E", "F"]
 
-function subsToText(subsSentences) {
+function subsToText(subsSentences, spkNames = {}) {
   return subsSentences
     .map((s) => {
-      const spk = spkLabels[s.spk] || String.fromCharCode(65 + (s.spk || 0))
+      const spk =
+        spkNames[s.spk] ||
+        spkLabels[s.spk] ||
+        String.fromCharCode(65 + (s.spk || 0))
       const time = s.start_time || ""
       const msg = s.msg || (s.words || []).map((w) => w.text).join(" ")
       return `${spk} [${time}] ${msg}`
@@ -165,7 +168,7 @@ export default function SubtitleEditTab({
               disabled={subsSentences.length === 0}
               onClick={() => {
                 const textarea = document.createElement("textarea")
-                textarea.value = subsToText(subsSentences)
+                textarea.value = subsToText(subsSentences, spkNames)
                 textarea.style.position = "fixed"
                 textarea.style.opacity = "0"
                 document.body.appendChild(textarea)

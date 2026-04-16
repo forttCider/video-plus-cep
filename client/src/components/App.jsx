@@ -260,6 +260,8 @@ export default function App() {
   // === Keyboard ===
   const navSentencesRef = activeTab === "subs" ? subsSentencesRef : sentencesRef
   const navWordRefs = activeTab === "subs" ? subsWordRefs : wordRefs
+  const activeTabRef = useRef(activeTab)
+  activeTabRef.current = activeTab
   const { handleKeyDown } = useKeyboardNavigation({
     sentencesRef: navSentencesRef,
     focusedWord,
@@ -267,6 +269,7 @@ export default function App() {
     setSelectedWordIds,
     wordRefs: navWordRefs,
     isSilenceHidden,
+    activeTabRef,
   })
 
   useEffect(() => {
@@ -278,9 +281,6 @@ export default function App() {
       window.removeEventListener("keyup", onKey)
     }
   }, [focusedWord, activeTab])
-
-  const activeTabRef = useRef(activeTab)
-  activeTabRef.current = activeTab
 
   usePlaybackTracking({
     isConnected,
@@ -385,27 +385,47 @@ export default function App() {
     }
   }
 
-  const handleWordClick = (word) => {
+  const handleWordClick = (word, sentenceIdx, wordIdx) => {
     if (editingWord) setEditingWord(null)
-    let sIdx = -1,
+    let sIdx = sentenceIdx
+    let wIdx = wordIdx
+    // 렌더링된 인덱스가 전달되지 않은 경우에만 검색 폴백
+    if (sIdx == null || wIdx == null) {
+      sIdx = -1
       wIdx = -1
-    const searchSentences =
-      activeTab === "subs" ? subsSentencesRef.current : sentencesRef.current
-    searchSentences.forEach((s, si) => {
-      s.words?.forEach((w, wi) => {
-        if (w.start_at === word.start_at) {
-          sIdx = si
-          wIdx = wi
+      const searchSentences =
+        activeTab === "subs" ? subsSentencesRef.current : sentencesRef.current
+      const matchById = word.id != null
+      outer: for (let si = 0; si < searchSentences.length; si++) {
+        const s = searchSentences[si]
+        for (let wi = 0; wi < (s.words?.length || 0); wi++) {
+          const w = s.words[wi]
+          const isMatch = matchById
+            ? w.id === word.id
+            : w.start_at === word.start_at
+          if (isMatch) {
+            sIdx = si
+            wIdx = wi
+            break outer
+          }
         }
-      })
-    })
-    if (sIdx === -1) return
+      }
+    }
+    if (sIdx === -1 || sIdx == null) return
     setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
     setCurrentWordId(word.start_at)
-    focusTrapRef.current?.focus()
     const result = getTimelinePositionTick(word, sentencesRef.current)
     if (result?.startTick !== undefined) {
-      setPlayerPositionByTicks(result.startTick.toString()).catch(() => {})
+      setPlayerPositionByTicks(result.startTick.toString())
+        .then(() => {
+          // Premiere seek 후 패널 포커스 확실히 회복
+          setTimeout(() => focusTrapRef.current?.focus(), 0)
+        })
+        .catch(() => {
+          focusTrapRef.current?.focus()
+        })
+    } else {
+      focusTrapRef.current?.focus()
     }
   }
 

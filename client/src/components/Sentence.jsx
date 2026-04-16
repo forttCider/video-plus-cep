@@ -182,7 +182,7 @@ const Sentence = forwardRef(
                   isCurrentSearchMatch={isCurrentSearchMatch}
                   isEditing={isEditingThis}
                   onClick={(e) => {
-                    onWordClick(word);
+                    onWordClick(word, sentenceIdx, wordIdx);
                     if (mode === "subs" && e.detail >= 2 && !word.is_deleted) {
                       onStartEditing?.(sentenceIdx, wordIdx);
                     }
