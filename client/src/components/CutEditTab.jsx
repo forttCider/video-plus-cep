@@ -6,6 +6,7 @@ import { Slider } from "./ui/slider"
 import SentenceList from "./SentenceList"
 import SummaryPanel from "./SummaryPanel"
 import WaveformPanel from "./WaveformPanel"
+import PreviewPanel from "./PreviewPanel"
 import { getOriginalTimeFromTimeline } from "../js/calculateTimeOffset"
 
 const spkLabels = ["A", "B", "C", "D", "E", "F"]
@@ -63,6 +64,7 @@ export default function CutEditTab({
   onWordTimeChange,
   onWaveformSeek,
   spkNames = {},
+  addLog,
 }) {
   const [checkedSentences, setCheckedSentences] = useState(new Set())
   const [summaryCopied, setSummaryCopied] = useState(false)
@@ -96,6 +98,14 @@ export default function CutEditTab({
     <div className="flex flex-1 min-h-0 gap-0">
       {/* 왼쪽 사이드바 */}
       <div className="flex flex-col border-r border-border" style={{ width: 320, minWidth: 320 }}>
+        {/* 미리보기 */}
+        <div className="border-b border-border">
+          <PreviewPanel
+            sentences={sentences}
+            selectedWordIds={selectedWordIds}
+            addLog={addLog}
+          />
+        </div>
         {/* 무음 길이 */}
         <div className="px-4 pt-3 pb-3 border-b border-border">
           <div className="flex items-center justify-between mb-2">

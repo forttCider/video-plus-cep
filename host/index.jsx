@@ -2012,6 +2012,66 @@ function getAudioClipsInfo() {
     }
 }
 
+/**
+ * 저해상도 비디오 프리셋 찾기 (번들된 H.264 프리셋)
+ */
+function findVideoPreset() {
+    var bundledPreset = new File($.fileName).parent.parent.fsName.replace(/\\/g, "/") + "/presets/h264_preview.epr";
+    $.writeln("[findVideoPreset] bundled: " + bundledPreset);
+    var bundledFile = new File(bundledPreset);
+    if (bundledFile.exists) return bundledPreset;
+    return null;
+}
+
+/**
+ * 시퀀스 미리보기 렌더링 (저해상도 H.264)
+ * exportAsMediaDirect로 프리뷰용 영상 파일 생성
+ */
+function renderPreview(outputPath) {
+    try {
+        $.writeln("[renderPreview] outputPath(param): " + outputPath);
+
+        if (!outputPath || outputPath === "auto") {
+            var homeFolder = new Folder("~");
+            var vpFolder = new Folder(homeFolder.fsName + "/.videoPlus");
+            if (!vpFolder.exists) vpFolder.create();
+            outputPath = vpFolder.fsName.replace(/\\/g, "/") + "/videoplus_preview.mp4";
+        }
+
+        if (!app || !app.project) return '{"success":false,"error":"프로젝트가 없습니다"}';
+        var seq = app.project.activeSequence;
+        if (!seq) return '{"success":false,"error":"시퀀스를 열어주세요"}';
+
+        var presetPath = findVideoPreset();
+        if (!presetPath) {
+            return '{"success":false,"error":"비디오 프리셋을 찾을 수 없습니다. presets/h264_preview.epr 파일이 필요합니다."}';
+        }
+
+        var outputFile = new File(outputPath);
+        var outputDir = outputFile.parent;
+        if (!outputDir.exists) outputDir.create();
+
+        var presetFile = new File(presetPath);
+        var nativeOutputPath = outputFile.fsName;
+        var nativePresetPath = presetFile.fsName;
+
+        $.writeln("[renderPreview] exportAsMediaDirect 호출...");
+        $.writeln("[renderPreview]   output: " + nativeOutputPath);
+        $.writeln("[renderPreview]   preset: " + nativePresetPath);
+        var success = seq.exportAsMediaDirect(nativeOutputPath, nativePresetPath, 0);
+        $.writeln("[renderPreview] result: " + success);
+
+        if (success && outputFile.exists) {
+            return '{"success":true,"outputPath":"' + outputPath.replace(/\\/g, "\\\\") + '"}';
+        } else {
+            return '{"success":false,"error":"프리뷰 렌더링 실패"}';
+        }
+    } catch (e) {
+        $.writeln("[renderPreview] ERROR: " + e.toString());
+        return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
+    }
+}
+
 function renderAudio(outputPath) {
     try {
         $.writeln("[renderAudio] outputPath(param): " + outputPath);

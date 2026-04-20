@@ -220,6 +220,14 @@ export async function renderAudio() {
 }
 
 /**
+ * 미리보기용 저해상도 H.264 비디오 렌더링
+ * @returns {Promise<{success: boolean, outputPath?: string, error?: string}>}
+ */
+export async function renderPreview() {
+  return evalJSON(`renderPreview("auto")`)
+}
+
+/**
  * 파일을 ArrayBuffer로 읽기 (Node.js fs 사용)
  * @param {string} filePath
  * @returns {Promise<ArrayBuffer>}
@@ -493,20 +501,24 @@ function gateAudioTracks(inputPaths, ffmpegPath, outputDir) {
       return new Promise((resolve, reject) => {
         const ext = path.extname(inputPath) || ".wav"
         const outputPath = path.join(outputDir, `gated_${i}${ext}`)
-        const gateFilter = "agate=threshold=0.03:ratio=9000:attack=1:release=500"
-        const args = [
-          "-i", inputPath,
-          "-af", gateFilter,
-          "-y", outputPath,
-        ]
-        execFile(ffmpegPath, args, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
-          if (err) {
-            reject(new Error(`gate track ${i} 실패: ${stderr || err.message}`))
-          } else {
-            results.push(outputPath)
-            resolve()
-          }
-        })
+        const gateFilter =
+          "agate=threshold=0.03:ratio=9000:attack=1:release=500"
+        const args = ["-i", inputPath, "-af", gateFilter, "-y", outputPath]
+        execFile(
+          ffmpegPath,
+          args,
+          { maxBuffer: 50 * 1024 * 1024 },
+          (err, stdout, stderr) => {
+            if (err) {
+              reject(
+                new Error(`gate track ${i} 실패: ${stderr || err.message}`),
+              )
+            } else {
+              results.push(outputPath)
+              resolve()
+            }
+          },
+        )
       })
     })
   })

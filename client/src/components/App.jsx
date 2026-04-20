@@ -900,6 +900,7 @@ export default function App() {
             onWordTimeChange={handleWordTimeChange}
             onWaveformSeek={handleWaveformSeek}
             spkNames={spkNames}
+            addLog={addLog}
           />
         </div>
 
