@@ -418,13 +418,15 @@ export default function App() {
     if (result?.startTick !== undefined) {
       setPlayerPositionByTicks(result.startTick.toString())
         .then(() => {
-          // Premiere seek 후 패널 포커스 확실히 회복
-          setTimeout(() => focusTrapRef.current?.focus(), 0)
+          // Premiere seek 후 패널 포커스 확실히 회복 (편집 중이면 input 포커스 유지)
+          setTimeout(() => {
+            if (!editingWordRef.current) focusTrapRef.current?.focus()
+          }, 0)
         })
         .catch(() => {
-          focusTrapRef.current?.focus()
+          if (!editingWordRef.current) focusTrapRef.current?.focus()
         })
-    } else {
+    } else if (!editingWordRef.current) {
       focusTrapRef.current?.focus()
     }
   }
