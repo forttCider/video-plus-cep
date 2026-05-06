@@ -47,16 +47,21 @@ export function buildTimelineIndex(sentences) {
       const gapTick = BigInt(word.gap_after_tick || 0);
       const durationTick = endTick - startTick + gapTick;
 
-      // 삭제 구간 저장 (연속 구간 병합 — gap 포함)
+      // 삭제 구간 저장 (연속/겹치는 구간 병합 — gap 포함)
+      // 새 word가 lastInterval 내부에 완전히 포함되거나 끝점이 lastInterval보다
+      // 작은 경우에도 interval이 줄어들지 않도록 max로 확장
       const lastInterval = deletedIntervals[deletedIntervals.length - 1];
+      const newEnd = endTick + gapTick;
       if (lastInterval && lastInterval.endTick >= startTick) {
-        // 이전 구간과 연속 → 확장
-        lastInterval.endTick = endTick + gapTick;
-        lastInterval.durationTick = lastInterval.endTick - lastInterval.startTick;
+        if (newEnd > lastInterval.endTick) {
+          lastInterval.endTick = newEnd;
+          lastInterval.durationTick = lastInterval.endTick - lastInterval.startTick;
+        }
+        // newEnd <= lastInterval.endTick: 새 word가 기존 interval 안에 포함 → 확장 불필요
       } else {
         deletedIntervals.push({
           startTick,
-          endTick: endTick + gapTick,
+          endTick: newEnd,
           durationTick,
         });
       }
@@ -156,41 +161,48 @@ export function getTimelinePosition(targetWord, sentences) {
 
 /**
  * Tick 기반 타임라인 위치 계산 (BigInt)
+ * 겹치는 deleted 구간을 중복 카운트하지 않도록 interval union으로 누적
  */
 export function getTimelinePositionTick(targetWord, sentences) {
-  let accumulatedOffsetTick = 0n;
-
   const words = sentences.flatMap((item) => item.words);
 
-  // 시간순 정렬 (start_at_tick 기준)
-  const sortedWords = [...words].sort((a, b) => {
-    const aStart = BigInt(a.start_at_tick || 0);
-    const bStart = BigInt(b.start_at_tick || 0);
-    if (aStart < bStart) return -1;
-    if (aStart > bStart) return 1;
-    return 0;
-  });
-
+  // target 이전의 deleted word들만 모아서 interval union 계산
   const targetStartTick = BigInt(targetWord.start_at_tick || 0);
 
-  for (let i = 0; i < sortedWords.length; i++) {
-    const word = sortedWords[i];
-    const wordStartTick = BigInt(word.start_at_tick || 0);
-
-    // 대상 단어에 도달하면 중단
-    if (wordStartTick >= targetStartTick) {
-      const timelineStartTick = targetStartTick - accumulatedOffsetTick;
-      return { startTick: timelineStartTick };
-    }
-
-    if (word.is_deleted && word.start_at_tick && word.end_at_tick) {
-      const gapTick = BigInt(word.gap_after_tick || 0);
-      accumulatedOffsetTick +=
-        BigInt(word.end_at_tick) - BigInt(word.start_at_tick) + gapTick;
-    }
+  const deletedIntervals = [];
+  for (const word of words) {
+    if (!word.is_deleted) continue;
+    // BigInt(0n)은 falsy라 !word.start_at_tick으로 거르면 0초로 드래그된 첫 단어가 누락됨
+    if (word.start_at_tick == null || word.end_at_tick == null) continue;
+    const wordStart = BigInt(word.start_at_tick);
+    if (wordStart >= targetStartTick) continue; // target 이후는 무관
+    const gapTick = BigInt(word.gap_after_tick || 0);
+    const wordEnd = BigInt(word.end_at_tick) + gapTick;
+    deletedIntervals.push({ start: wordStart, end: wordEnd });
   }
 
-  return { startTick: BigInt(targetWord.start_at_tick || 0) };
+  // start로 정렬 후 union
+  deletedIntervals.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+
+  let accumulatedOffsetTick = 0n;
+  let cur = null;
+  for (const iv of deletedIntervals) {
+    if (!cur) {
+      cur = { start: iv.start, end: iv.end };
+    } else if (iv.start <= cur.end) {
+      // 겹치거나 인접 → 확장
+      if (iv.end > cur.end) cur.end = iv.end;
+    } else {
+      accumulatedOffsetTick += cur.end - cur.start;
+      cur = { start: iv.start, end: iv.end };
+    }
+  }
+  if (cur) accumulatedOffsetTick += cur.end - cur.start;
+
+  // target이 어떤 interval 내부에 있다면 그 interval 시작점부터의 차이까지만 빼야
+  // 함. 대신 일반적 케이스(target은 살아있는 word)에서는 직접 빼도 OK
+  const timelineStartTick = targetStartTick - accumulatedOffsetTick;
+  return { startTick: timelineStartTick };
 }
 
 /**

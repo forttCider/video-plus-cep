@@ -5,7 +5,7 @@ export default function LogPanel({ logs, onCopy, onClear, logPanelRef }) {
   if (logs.length === 0) return null
 
   return (
-    <div className="flex-shrink-0">
+    <div className="flex-shrink-0 border-b border-border">
       <div className="flex items-center justify-between py-1.5 px-4 border-b border-border" style={{ background: "rgba(255,255,255,0.03)" }}>
         <span className="text-xs text-muted-foreground/40">
           로그 ({logs.length})
@@ -33,7 +33,7 @@ export default function LogPanel({ logs, onCopy, onClear, logPanelRef }) {
       </div>
       <div
         ref={logPanelRef}
-        className="h-[70px] overflow-y-auto px-4 py-2 font-mono text-[11px] border-b border-border"
+        className="h-[70px] overflow-y-auto px-4 py-2 font-mono text-[11px]"
       >
         {logs.map((log, i) => (
           <div

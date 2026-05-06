@@ -33,6 +33,8 @@ export default function WaveformPanel({
   const [isRegionsLoading, setIsRegionsLoading] = useState(false)
   const [duration, setDuration] = useState(0)
   const [scrollTrigger, setScrollTrigger] = useState(0)
+  const [containerVisible, setContainerVisible] = useState(false)
+  const loadedAudioPathRef = useRef(null)
 
   useEffect(() => {
     onWordTimeChangeRef.current = onWordTimeChange
@@ -105,6 +107,7 @@ export default function WaveformPanel({
       cursorColor: "#fff",
       cursorWidth: 2,
       height: 100,
+      barHeight: 3,
       normalize: true,
       minPxPerSec: 200,
       scrollParent: true,
@@ -120,7 +123,8 @@ export default function WaveformPanel({
     wavesurferRef.current = ws
 
     ws.on("ready", () => {
-      setDuration(ws.getDuration())
+      const dur = ws.getDuration()
+      setDuration(dur)
 
       setTimeout(() => {
         setIsReady(true)
@@ -222,10 +226,15 @@ export default function WaveformPanel({
     }
   }, [])
 
-  // 오디오 파일 로드
+  // 오디오 파일 로드 (container가 visible해진 후에만 실행 — hidden 상태에선
+  // ws.load 시 wrapper width=0이라 canvas anchor가 모두 0으로 잘못 계산됨)
   useEffect(() => {
     if (!wavesurferRef.current) return
+    if (!containerVisible) return
     if (!audioPath && !(peaks && peaks.length > 0)) return
+    // 같은 audioPath 재load 방지 (visibility 토글 시)
+    if (audioPath && audioPath === loadedAudioPathRef.current) return
+    loadedAudioPathRef.current = audioPath || null
 
     setIsReady(false)
     activeRegionsRef.current.clear()
@@ -264,16 +273,19 @@ export default function WaveformPanel({
 
     if (!audioPath) return
 
-    if (audioPath.startsWith("http")) {
-      wavesurferRef.current.load(audioPath)
+    // ?v=timestamp suffix는 cache-buster 용도. 실제 파일 경로엔 포함되면 안 됨
+    const cleanPath = audioPath.split("?")[0]
+
+    if (cleanPath.startsWith("http")) {
+      wavesurferRef.current.load(cleanPath)
     } else {
-      let url = audioPath
-      if (!audioPath.startsWith("blob:") && !audioPath.startsWith("file://")) {
-        url = `file://${audioPath}`
+      let url = cleanPath
+      if (!cleanPath.startsWith("blob:") && !cleanPath.startsWith("file://")) {
+        url = `file://${cleanPath}`
       }
       wavesurferRef.current.load(url)
     }
-  }, [audioPath, peaks])
+  }, [audioPath, peaks, containerVisible])
 
   // 🔥 다시 받아쓰기 시 이전 regions 정리
   useEffect(() => {
@@ -433,6 +445,40 @@ export default function WaveformPanel({
   useEffect(() => {
     scrollToCursorRef.current = scrollToCursor
   }, [scrollToCursor])
+
+  // container visibility 추적 — width>0 되면 audio load 트리거
+  // 이후 resize 시 region 가시 범위 재계산 (200ms debounce)
+  useEffect(() => {
+    if (!containerRef.current) return
+    const target = containerRef.current
+    let didSetVisible = false
+    let resizeTimeout = null
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        if (e.contentRect.width > 0) {
+          if (!didSetVisible) {
+            didSetVisible = true
+            setContainerVisible(true)
+          } else {
+            if (resizeTimeout) return
+            resizeTimeout = setTimeout(() => {
+              setScrollTrigger((n) => n + 1)
+              resizeTimeout = null
+            }, 200)
+          }
+        }
+      }
+    })
+    ro.observe(target)
+    if (target.getBoundingClientRect().width > 0) {
+      didSetVisible = true
+      setContainerVisible(true)
+    }
+    return () => {
+      ro.disconnect()
+      if (resizeTimeout) clearTimeout(resizeTimeout)
+    }
+  }, [])
 
   // 재생 중 커서 업데이트
   useEffect(() => {

@@ -569,18 +569,19 @@ function deleteWordByTimelineTicks(timelineStartTicks, timelineEndTicks) {
         var actualLeftOutPoint = "";
         var actualRightInPoint = "";
         var deletedCount = 0;
-        var SEARCH_RANGE = 5;
+        var SEARCH_PAD = 5; // 양쪽 인덱스에서 안전 마진
         var tolerance = 1000000000;
 
-        // 비디오 트랙 - 이진 탐색 최적화
+        // 비디오 트랙 - razor 범위 전체를 커버 (start와 end 양쪽 인덱스 사용)
         for (var v = 0; v < seq.videoTracks.numTracks; v++) {
             var vt = seq.videoTracks[v];
             if (vt.clips.numItems === 0) continue;
-            
-            var nearIdx = findClipIndexNear(vt, timelineStartTicks);
-            var startIdx = Math.max(0, nearIdx - SEARCH_RANGE);
-            var endIdx = Math.min(vt.clips.numItems - 1, nearIdx + SEARCH_RANGE);
-            
+
+            var nearStartIdx = findClipIndexNear(vt, timelineStartTicks);
+            var nearEndIdx = findClipIndexNear(vt, timelineEndTicks);
+            var startIdx = Math.max(0, nearStartIdx - SEARCH_PAD);
+            var endIdx = Math.min(vt.clips.numItems - 1, nearEndIdx + SEARCH_PAD);
+
             // 역순으로 삭제 (인덱스 꼬임 방지)
             for (var j = endIdx; j >= startIdx; j--) {
                 var c = vt.clips[j];
@@ -606,15 +607,16 @@ function deleteWordByTimelineTicks(timelineStartTicks, timelineEndTicks) {
             }
         }
 
-        // 오디오 트랙 - 이진 탐색 최적화
+        // 오디오 트랙 - razor 범위 전체를 커버
         for (var a = 0; a < seq.audioTracks.numTracks; a++) {
             var at = seq.audioTracks[a];
             if (at.clips.numItems === 0) continue;
-            
-            var nearIdxA = findClipIndexNear(at, timelineStartTicks);
-            var startIdxA = Math.max(0, nearIdxA - SEARCH_RANGE);
-            var endIdxA = Math.min(at.clips.numItems - 1, nearIdxA + SEARCH_RANGE);
-            
+
+            var nearStartIdxA = findClipIndexNear(at, timelineStartTicks);
+            var nearEndIdxA = findClipIndexNear(at, timelineEndTicks);
+            var startIdxA = Math.max(0, nearStartIdxA - SEARCH_PAD);
+            var endIdxA = Math.min(at.clips.numItems - 1, nearEndIdxA + SEARCH_PAD);
+
             for (var k = endIdxA; k >= startIdxA; k--) {
                 var ac = at.clips[k];
                 var acStart = parseFloat(ac.start.ticks);
@@ -2098,10 +2100,35 @@ function renderAudio(outputPath) {
 }
 
 /**
+ * 클립이 있는 오디오 트랙 목록 조회 (UI 체크박스용)
+ * @returns JSON { success, tracks: [{ trackIndex, clipCount, name }] }
+ */
+function listAudioTracksWithClips() {
+    try {
+        if (!app || !app.project) return '{"success":false,"error":"프로젝트가 없습니다"}';
+        var seq = app.project.activeSequence;
+        if (!seq) return '{"success":false,"error":"시퀀스를 열어주세요"}';
+
+        var items = [];
+        for (var t = 0; t < seq.audioTracks.numTracks; t++) {
+            var track = seq.audioTracks[t];
+            if (track.clips && track.clips.numItems > 0) {
+                var name = track.name || ("A" + (t + 1));
+                items.push('{"trackIndex":' + t + ',"clipCount":' + track.clips.numItems + ',"name":"' + String(name).replace(/"/g, '\\"') + '"}');
+            }
+        }
+        return '{"success":true,"tracks":[' + items.join(',') + ']}';
+    } catch (e) {
+        return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
+    }
+}
+
+/**
  * 클립이 있는 오디오 트랙을 각각 개별 WAV로 렌더링
+ * @param {string} trackIndicesCsv - 선택된 트랙 인덱스 CSV (예: "0,2,3"). 빈 문자열이면 전체.
  * @returns JSON { success, tracks: [{ trackIndex, outputPath }] }
  */
-function renderAudioPerTrack() {
+function renderAudioPerTrack(trackIndicesCsv) {
     try {
         if (!app || !app.project) return '{"success":false,"error":"프로젝트가 없습니다"}';
         var seq = app.project.activeSequence;
@@ -2128,18 +2155,31 @@ function renderAudioPerTrack() {
             originalAudioMutes.push(seq.audioTracks[j].isMuted());
         }
 
-        // 클립이 있는 트랙 목록
+        // 선택된 트랙 인덱스 필터 파싱 (CSV "0,2,3")
+        var filterMap = null;
+        if (trackIndicesCsv && typeof trackIndicesCsv === "string" && trackIndicesCsv.length > 0) {
+            filterMap = {};
+            var parts = trackIndicesCsv.split(",");
+            for (var fi = 0; fi < parts.length; fi++) {
+                var v = parseInt(parts[fi], 10);
+                if (!isNaN(v)) filterMap[v] = true;
+            }
+        }
+
+        // 클립이 있는 트랙 목록 (필터 적용)
         var tracksWithClips = [];
         for (var t = 0; t < seq.audioTracks.numTracks; t++) {
             var track = seq.audioTracks[t];
             if (track.clips && track.clips.numItems > 0) {
-                tracksWithClips.push(t);
+                if (!filterMap || filterMap[t]) {
+                    tracksWithClips.push(t);
+                }
             }
         }
 
         if (tracksWithClips.length === 0) {
             restoreTracks(seq, originalVideoMutes, originalAudioMutes);
-            return '{"success":false,"error":"오디오 클립이 없습니다"}';
+            return '{"success":false,"error":"선택된 오디오 트랙이 없습니다"}';
         }
 
         // 비디오 전체 뮤트

@@ -1,11 +1,29 @@
-import { RefreshCw, Play } from "lucide-react"
+import { RefreshCw, Play, AlertCircle } from "lucide-react"
 
-export default function SummaryPanel({ summary, loading, onSeek }) {
+export default function SummaryPanel({ summary, loading, error, onRetry, onSeek }) {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-8">
         <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground mb-2" />
         <span className="text-sm text-muted-foreground">요약 생성 중...</span>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 gap-3">
+        <AlertCircle className="h-5 w-5 text-muted-foreground" />
+        <span className="text-sm text-muted-foreground">요약에 실패했습니다</span>
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={!onRetry}
+          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className="h-3 w-3" />
+          다시 쓰기
+        </button>
       </div>
     )
   }

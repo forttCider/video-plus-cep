@@ -4,7 +4,6 @@ import { Button } from "./ui/button"
 import { Card, CardContent } from "./ui/card"
 import AppHeader from "./AppHeader"
 
-import BatchProgress from "./BatchProgress"
 import LogPanel from "./LogPanel"
 import CutEditControls from "./CutEditControls"
 import CutEditTab from "./CutEditTab"
@@ -32,6 +31,7 @@ import {
   exportCaptionsAsSRT,
   hasCaptionsBin,
   getExtensionVersion,
+  getAudioTracksWithClips,
 } from "../js/cep-bridge"
 import useAudioUpload from "../hooks/useAudioUpload"
 import useKeyboardNavigation from "../hooks/useKeyboardNavigation"
@@ -62,8 +62,18 @@ export default function App() {
   const [sequenceInfo, setSequenceInfo] = useState(null)
   const [numSpeakers, setNumSpeakers] = useState(2)
   const numSpeakersRef = useRef(2)
+  const [availableAudioTracks, setAvailableAudioTracks] = useState([]) // [{trackIndex, clipCount, name}]
+  const [selectedTrackIndices, setSelectedTrackIndices] = useState(new Set())
+  const selectedTrackIndicesRef = useRef(new Set())
+  const isUploadRef = useRef(false) // 업로드 중엔 트랙 리로드/선택 리셋 방지
+  const updateSelectedTrackIndices = useCallback((next) => {
+    selectedTrackIndicesRef.current = next
+    setSelectedTrackIndices(next)
+  }, [])
   const [summary, setSummary] = useState(null)
   const [summaryLoading, setSummaryLoading] = useState(false)
+  const [summaryError, setSummaryError] = useState(false)
+  const [summaryTaskId, setSummaryTaskId] = useState(null)
   const [sentences, setSentences] = useState([])
   const [currentWordId, setCurrentWordId] = useState(null)
   const [searchResultsSet] = useState(new Set())
@@ -185,26 +195,50 @@ export default function App() {
     addLog,
   })
 
-  const { handleTranscribeFinish, resetAllState } = useTranscribe({
-    setStatus,
-    setSentences,
-    sentencesRef,
-    timebaseRef,
-    setOriginalSpkList,
-    setHasSavedState,
-    saveState,
-    setSummary,
-    setSummaryLoading,
-    numSpeakersRef,
-    addLog,
-    setAudioPath,
-    setCurrentWordId,
-    setSelectedWordIds,
-    setFocusedWord,
-    setCurrentTime,
-    setIsPlayingState,
-    timelineIndexRef,
-  })
+  const { handleTranscribeFinish, resetAllState, fetchSummary } = useTranscribe(
+    {
+      setStatus,
+      setSentences,
+      sentencesRef,
+      timebaseRef,
+      setOriginalSpkList,
+      setHasSavedState,
+      saveState,
+      setSummary,
+      setSummaryLoading,
+      setSummaryError,
+      setSummaryTaskId,
+      numSpeakersRef,
+      addLog,
+      setAudioPath,
+      setCurrentWordId,
+      setSelectedWordIds,
+      setFocusedWord,
+      setCurrentTime,
+      setIsPlayingState,
+      timelineIndexRef,
+    },
+  )
+
+  const handleRetrySummary = useCallback(() => {
+    if (summaryTaskId) fetchSummary(summaryTaskId)
+  }, [summaryTaskId, fetchSummary])
+
+  // "다시 받아쓰기" — 바로 시작하지 않고 홈 화면으로 돌려서 사용자가 트랙/화자 재설정 가능하게
+  const handleReturnToHome = useCallback(() => {
+    setSentences([])
+    sentencesRef.current = []
+    setSelectedWordIds(new Set())
+    setCurrentWordId(null)
+    setFocusedWord(null)
+    setAudioPath(null)
+    setSummary(null)
+    setSummaryError(false)
+    setSummaryTaskId(null)
+    setSpkNames({})
+    spkNamesRef.current = {}
+    timelineIndexRef.current = null
+  }, [setFocusedWord])
 
   const silenceThresholdMs = React.useMemo(
     () => Math.round((parseFloat(silenceSeconds) || 1) * 1000),
@@ -242,8 +276,25 @@ export default function App() {
           words: s.words.map((w) => {
             const orig = wordMap.get(w.id)
             if (!orig) return w
-            if (orig.is_deleted !== w.is_deleted) {
-              return { ...w, is_deleted: orig.is_deleted }
+            // 드래그/편집으로 바뀐 tick·시간 필드까지 sync (is_deleted만 sync 시
+            // subs 탭이 stale tick으로 시킹/재생되는 문제 방지)
+            if (
+              orig.is_deleted !== w.is_deleted ||
+              orig.start_at !== w.start_at ||
+              orig.end_at !== w.end_at ||
+              orig.start_at_tick !== w.start_at_tick ||
+              orig.end_at_tick !== w.end_at_tick
+            ) {
+              return {
+                ...w,
+                is_deleted: orig.is_deleted,
+                start_at: orig.start_at,
+                end_at: orig.end_at,
+                start_at_tick: orig.start_at_tick,
+                end_at_tick: orig.end_at_tick,
+                start_at_sec: orig.start_at_sec,
+                end_at_sec: orig.end_at_sec,
+              }
             }
             return w
           }),
@@ -256,6 +307,36 @@ export default function App() {
       subsSentencesRef.current = []
     }
   }, [sentences])
+
+  // 시퀀스 변경 시 오디오 트랙 목록 조회 (받아쓰기 전에만 필요)
+  const loadAudioTracks = useCallback(async () => {
+    const res = await getAudioTracksWithClips()
+    if (res?.success && res.tracks) {
+      setAvailableAudioTracks(res.tracks)
+      // 기본: 아무것도 선택 안 함 (사용자가 명시적으로 골라야 함)
+      updateSelectedTrackIndices(new Set())
+    } else {
+      setAvailableAudioTracks([])
+      updateSelectedTrackIndices(new Set())
+    }
+  }, [updateSelectedTrackIndices])
+
+  useEffect(() => {
+    // 업로드 중에는 시퀀스가 cloneAndArchiveSequence로 바뀌어도 선택을 보존
+    if (sequenceInfo?.id && sentences.length === 0 && !isUploadRef.current) {
+      loadAudioTracks()
+    }
+  }, [sequenceInfo?.id, sentences.length, loadAudioTracks])
+
+  const toggleTrackSelection = useCallback(
+    (trackIndex) => {
+      const next = new Set(selectedTrackIndicesRef.current)
+      if (next.has(trackIndex)) next.delete(trackIndex)
+      else next.add(trackIndex)
+      updateSelectedTrackIndices(next)
+    },
+    [updateSelectedTrackIndices],
+  )
 
   // === Keyboard ===
   const navSentencesRef = activeTab === "subs" ? subsSentencesRef : sentencesRef
@@ -312,6 +393,8 @@ export default function App() {
               ...word,
               start_at: newStart,
               end_at: newEnd,
+              start_at_sec: newStart / 1000,
+              end_at_sec: newEnd / 1000,
               start_at_tick: secondsToTicksAligned(
                 newStart / 1000,
                 timebaseRef.current,
@@ -416,7 +499,15 @@ export default function App() {
     setCurrentWordId(word.start_at)
     const result = getTimelinePositionTick(word, sentencesRef.current)
     if (result?.startTick !== undefined) {
-      setPlayerPositionByTicks(result.startTick.toString())
+      // result.startTick = word.start_at_tick(frame-floor) - offset
+      // 단어의 정확한 source ms 위치로 seek 보정 — frame-floor 때문에 단어 시작
+      // 직전(최대 33ms@30fps)으로 점프하던 문제 해결. razor는 그대로 floor 유지.
+      const exactWordTick = BigInt(
+        Math.round((word.start_at / 1000) * 254016000000),
+      )
+      const flooredOffset = BigInt(word.start_at_tick || 0) - result.startTick
+      const seekTick = exactWordTick - flooredOffset
+      setPlayerPositionByTicks(seekTick.toString())
         .then(() => {
           // Premiere seek 후 패널 포커스 확실히 회복 (편집 중이면 input 포커스 유지)
           setTimeout(() => {
@@ -555,6 +646,8 @@ export default function App() {
       setShowHistory,
       setIsLoadingHistory,
       setBackupList,
+      setHasSavedState,
+      loadedSequenceIdRef,
       setStatus,
       setIsRestoring,
       loadSequenceInfo,
@@ -583,6 +676,7 @@ export default function App() {
     audioPath: uploadedAudioPath,
   } = useAudioUpload({
     numSpeakersRef,
+    selectedTrackIndicesRef,
     onFinish: async (taskId) => {
       await handleTranscribeFinish(taskId)
       loadedSequenceIdRef.current = sequenceInfo?.id
@@ -593,6 +687,8 @@ export default function App() {
     },
     onStart: async () => {
       // 먼저 화면 초기화
+      // 시퀀스 클론으로 시퀀스 ID가 바뀌어도 트랙 선택을 보존하기 위해 즉시 set
+      isUploadRef.current = true
       setHasSavedState(false)
       setSentences([])
       setCurrentWordId(null)
@@ -624,6 +720,10 @@ export default function App() {
   useEffect(() => {
     setAudioPath(uploadedAudioPath || null)
   }, [uploadedAudioPath])
+
+  useEffect(() => {
+    isUploadRef.current = isUpload
+  }, [isUpload])
 
   // === Load saved state ===
   const handleLoadSavedState = async () => {
@@ -679,31 +779,11 @@ export default function App() {
         )
         if (savedState.summaryData) {
           setSummary(savedState.summaryData)
+          setSummaryTaskId(savedState.taskId || null)
+          setSummaryError(false)
           addLog("info", "요약본 복원됨")
         } else if (savedState.taskId) {
-          setSummaryLoading(true)
-          addLog(
-            "info",
-            `[불러오기] 요약본 API 요청 시작 (taskId: ${savedState.taskId}, spk_count: ${numSpeakersRef.current || 2})`,
-          )
-          fetch(
-            `https://vapi.cidermics.com/transcribe/summary/${savedState.taskId}?spk_count=${numSpeakersRef.current || 2}`,
-          )
-            .then((res) => res.json())
-            .then((data) => {
-              addLog(
-                "info",
-                `[불러오기] 요약본 API 응답 수신 (data: ${data ? JSON.stringify(data).slice(0, 200) : "null"})`,
-              )
-              if (data) {
-                setSummary(data)
-                addLog("info", "요약본 불러오기 완료")
-              }
-            })
-            .catch((e) =>
-              addLog("warn", `[불러오기] 요약본 불러오기 실패: ${e.message}`),
-            )
-            .finally(() => setSummaryLoading(false))
+          fetchSummary(savedState.taskId)
         }
       } else {
         setStatus("복원할 데이터가 없습니다")
@@ -788,6 +868,7 @@ export default function App() {
           setActiveTab(tab)
         }}
         onOpenHistory={handleOpenHistory}
+        canOpenHistory={sentences.length > 0}
         onUndo={subsUndo}
         onRedo={subsRedo}
         canUndo={undoStackRef.current.length > 0}
@@ -809,10 +890,6 @@ export default function App() {
         logPanelRef={logPanelRef}
       />
       <div className="flex flex-col flex-1 min-h-0">
-        <div className="px-4">
-          <BatchProgress batchProgress={batchProgress} />
-        </div>
-
         {/* 다른 시퀀스의 저장된 상태가 있으면 배너 표시 */}
         {sentences.length > 0 &&
           sequenceInfo?.id &&
@@ -849,6 +926,9 @@ export default function App() {
               setNumSpeakers(val)
               numSpeakersRef.current = val
             }}
+            availableAudioTracks={availableAudioTracks}
+            selectedTrackIndices={selectedTrackIndices}
+            onToggleTrack={toggleTrackSelection}
             hasSavedState={hasSavedState}
             isRestoring={isRestoring}
             onLoadSavedState={handleLoadSavedState}
@@ -862,7 +942,7 @@ export default function App() {
           <CutEditTab
             silenceSeconds={silenceSeconds}
             onSilenceChange={setSilenceSeconds}
-            onTranscribe={onClickRenderAudio}
+            onTranscribe={handleReturnToHome}
             isUpload={isUpload}
             isConnected={isConnected}
             isProcessing={isProcessing}
@@ -880,6 +960,8 @@ export default function App() {
             }}
             summary={summary}
             summaryLoading={summaryLoading}
+            summaryError={summaryError}
+            onRetrySummary={handleRetrySummary}
             focusedWord={activeTab === "cut" ? focusedWord : null}
             currentWordId={currentWordId}
             currentWordSentenceIdx={currentWordSentenceIdx}

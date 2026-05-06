@@ -6,6 +6,7 @@ export default function AppHeader({
   activeTab,
   onTabChange,
   onOpenHistory,
+  canOpenHistory,
   onUndo,
   onRedo,
   canUndo,
@@ -76,6 +77,7 @@ export default function AppHeader({
           size="icon"
           className="h-6 w-6"
           onClick={onOpenHistory}
+          disabled={!canOpenHistory}
           title="백업 히스토리"
         >
           <History className="h-3.5 w-3.5" />

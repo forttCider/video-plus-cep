@@ -24,6 +24,8 @@ export default function useBackupRestore({
   setStatus,
   setIsRestoring,
   loadSequenceInfo,
+  setHasSavedState,
+  loadedSequenceIdRef,
 }) {
   const handleOpenHistory = async () => {
     setBackupList([])
@@ -50,6 +52,11 @@ export default function useBackupRestore({
       setShowHistory(false)
       await setAllTracksLocked(true)
       setStatus(`복원 완료: ${result.restoredName}`)
+      // 복원된 시퀀스를 "이미 로드됨"으로 표시 → "불러오기" 배너 재노출 방지
+      if (loadedSequenceIdRef && result.newSequenceId) {
+        loadedSequenceIdRef.current = result.newSequenceId
+      }
+      setHasSavedState && setHasSavedState(false)
       loadSequenceInfo()
       const wordsResult = await loadWordsData(backupId, result.newSequenceId)
       if (wordsResult?.success) {

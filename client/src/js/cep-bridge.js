@@ -3,6 +3,18 @@
  * CSInterface.evalScript()로 ExtendScript 함수 호출
  */
 
+import {
+  readWav,
+  writeWav16,
+  toMono,
+  crosstalkReduceMulti,
+  normalizePeak,
+  normalizePeakSharedMulti,
+  downsample,
+} from "./bss-purejs"
+
+const STT_TARGET_SR = 16000
+
 let csInterface = null
 let extendScriptLoaded = false
 
@@ -437,14 +449,30 @@ function extractAndMergeAudio(clips, ffmpegPath, outputPath) {
 /**
  * 트랙별 렌더링 (ExtendScript)
  */
-async function renderAudioPerTrack() {
-  return evalJSON("renderAudioPerTrack()")
+/**
+ * 시퀀스의 클립이 있는 오디오 트랙 목록 조회
+ * @returns {Promise<{success: boolean, tracks?: Array<{trackIndex: number, clipCount: number, name: string}>, error?: string}>}
+ */
+export async function getAudioTracksWithClips() {
+  return evalJSON("listAudioTracksWithClips()")
+}
+
+async function renderAudioPerTrack(trackIndices) {
+  const csv =
+    Array.isArray(trackIndices) && trackIndices.length > 0
+      ? trackIndices.join(",")
+      : ""
+  return evalJSON(`renderAudioPerTrack("${csv}")`)
 }
 
 /**
- * ffmpeg로 WAV 파일 여러 개를 amix 믹싱
+ * ffmpeg로 WAV 파일 여러 개를 amix 믹싱 (모노)
+ * @param {string[]} inputPaths
+ * @param {string} ffmpegPath
+ * @param {string} outputPath
+ * @param {number} sampleRate - 출력 샘플레이트
  */
-function mixAudioFiles(inputPaths, ffmpegPath, outputPath) {
+function mixAudioFiles(inputPaths, ffmpegPath, outputPath, sampleRate = 16000) {
   const { execFile } = require("child_process")
 
   return new Promise((resolve, reject) => {
@@ -454,99 +482,15 @@ function mixAudioFiles(inputPaths, ffmpegPath, outputPath) {
     })
 
     if (inputPaths.length === 1) {
-      // 트랙 1개면 그냥 복사
-      args.push("-c", "copy", "-y", outputPath)
+      // 단일 트랙도 sampleRate/mono로 변환 (디스플레이 파일 크기 축소 위해 필수)
+      args.push("-ar", String(sampleRate), "-ac", "1", "-y", outputPath)
     } else {
-      // 여러 트랙 amix 믹싱
       args.push(
         "-filter_complex",
         `amix=inputs=${inputPaths.length}:duration=longest:normalize=0`,
       )
-      args.push("-ar", "48000", "-ac", "1", "-y", outputPath)
+      args.push("-ar", String(sampleRate), "-ac", "1", "-y", outputPath)
     }
-
-    execFile(
-      ffmpegPath,
-      args,
-      { maxBuffer: 50 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        if (err) reject(new Error(stderr || err.message))
-        else resolve(outputPath)
-      },
-    )
-  })
-}
-
-/**
- * ffmpeg agate로 트랙별 노이즈 게이팅 (크로스토크/블리드 제거)
- * 특정 볼륨 이하를 무음 처리하여 해당 화자만 남김
- */
-function gateAudioTracks(inputPaths, ffmpegPath, outputDir) {
-  const { execFile } = require("child_process")
-  const path = require("path")
-
-  const results = []
-  let chain = Promise.resolve()
-
-  inputPaths.forEach((inputPath, i) => {
-    chain = chain.then(() => {
-      return new Promise((resolve, reject) => {
-        const ext = path.extname(inputPath) || ".wav"
-        const outputPath = path.join(outputDir, `gated_${i}${ext}`)
-        const gateFilter = "agate=threshold=0.03:ratio=9000:attack=1:release=500"
-        const args = [
-          "-i", inputPath,
-          "-af", gateFilter,
-          "-y", outputPath,
-        ]
-        execFile(ffmpegPath, args, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
-          if (err) {
-            reject(new Error(`gate track ${i} 실패: ${stderr || err.message}`))
-          } else {
-            results.push(outputPath)
-            resolve()
-          }
-        })
-      })
-    })
-  })
-
-  return chain.then(() => results)
-}
-
-/**
- * ffmpeg amerge로 멀티채널 WAV 생성 (각 트랙 = 1채널, 화자 분리용)
- * 트랙 2개 → 스테레오, 3개 이상 → 멀티채널
- */
-function createMultiChannelAudio(inputPaths, ffmpegPath, outputPath) {
-  const { execFile } = require("child_process")
-
-  return new Promise((resolve, reject) => {
-    if (inputPaths.length < 2) {
-      reject(new Error("amerge는 2개 이상의 트랙 필요"))
-      return
-    }
-    const args = []
-    inputPaths.forEach((f) => {
-      args.push("-i", f)
-    })
-
-    // 각 트랙을 모노로 다운믹스 후 amerge로 N채널 WAV 생성
-    const monoFilters = inputPaths
-      .map((_, i) => `[${i}:a]pan=mono|c0=0.5*c0+0.5*c1[m${i}]`)
-      .join(";")
-    const mergeInputs = inputPaths.map((_, i) => `[m${i}]`).join("")
-    const filterComplex = `${monoFilters};${mergeInputs}amerge=inputs=${inputPaths.length}[a]`
-    args.push("-filter_complex", filterComplex)
-    args.push("-map", "[a]")
-    args.push(
-      "-ac",
-      String(inputPaths.length),
-      "-ar",
-      "48000",
-      "-y",
-      outputPath,
-    )
 
     execFile(
       ffmpegPath,
@@ -564,19 +508,18 @@ function createMultiChannelAudio(inputPaths, ffmpegPath, outputPath) {
  * 오디오 렌더링 + ArrayBuffer 반환
  * 트랙별 렌더링 → ffmpeg amix 믹싱
  * 실패 시 기존 exportAsMediaDirect 폴백
+ * @param {Function} log - 로그 콜백
+ * @param {{ trackIndices?: number[] }} options - 렌더할 트랙 인덱스 배열 (생략 시 전체)
  */
-export async function renderAudioAndRead(log) {
+export async function renderAudioAndRead(log, options = {}) {
   const path = require("path")
   const os = require("os")
   const fs = require("fs")
-  const _log = (msg) => {
-    log && log(msg)
-  }
+  const { trackIndices } = options
 
   try {
-    // 1. 트랙별 개별 렌더링
-    _log("트랙별 오디오 렌더링 시작...")
-    const trackResult = await renderAudioPerTrack()
+    // 1. 트랙별 개별 렌더링 (선택된 트랙만)
+    const trackResult = await renderAudioPerTrack(trackIndices)
 
     if (
       !trackResult.success ||
@@ -586,118 +529,222 @@ export async function renderAudioAndRead(log) {
       throw new Error(trackResult.error || "트랙 렌더링 실패")
     }
 
-    _log("렌더링 완료: " + trackResult.tracks.length + "개 트랙")
-
     const trackPaths = trackResult.tracks.map((t) => t.outputPath)
 
     // 2. 트랙이 1개면 그대로 사용, 여러 개면 ffmpeg amix
     const homeDir = os.homedir()
     const outputPath = path.join(homeDir, ".videoPlus", "videoplus_audio.wav")
-
-    // 디버그용 사본 폴더 (타임스탬프별)
     const ts = new Date().toISOString().replace(/[:.]/g, "-")
-    const debugDir = path.join(homeDir, ".videoPlus", "debug", ts)
+    // 표시용 mix — 매번 다른 파일명으로 (캐싱 100% 회피)
+    const displayPath = path.join(
+      homeDir,
+      ".videoPlus",
+      `videoplus_display_${ts}.wav`,
+    )
+
+    // 이전 display_*.wav 파일들 정리 (디스크 누적 방지)
     try {
-      fs.mkdirSync(debugDir, { recursive: true })
+      const dirEntries = fs.readdirSync(path.join(homeDir, ".videoPlus"))
+      for (const entry of dirEntries) {
+        if (entry.startsWith("videoplus_display_") && entry.endsWith(".wav")) {
+          try {
+            fs.unlinkSync(path.join(homeDir, ".videoPlus", entry))
+          } catch (e) {}
+        }
+      }
     } catch (e) {}
 
-    // 트랙별 사본 저장 (확인용)
-    trackPaths.forEach((p, i) => {
-      try {
-        const dest = path.join(
-          debugDir,
-          `track_${i + 1}${path.extname(p) || ".wav"}`,
-        )
-        fs.copyFileSync(p, dest)
-      } catch (e) {
-        _log("트랙 사본 저장 실패: " + e.message)
-      }
-    })
-    _log("트랙별 사본 저장: " + debugDir)
-
-    if (trackPaths.length === 1) {
-      // 트랙 1개: 파일 이름만 변경
-      const srcPath = trackPaths[0]
-      if (srcPath !== outputPath) {
-        fs.copyFileSync(srcPath, outputPath)
-      }
-      _log("트랙 1개 → 그대로 사용")
-    } else {
-      // 여러 트랙: ffmpeg amix 믹싱
-      const ffmpegPath = getFFmpegPath()
-      _log("ffmpeg 경로: " + ffmpegPath)
-      ensureFFmpegExecutable(ffmpegPath)
-      _log("ffmpeg 믹싱: " + trackPaths.length + "개 트랙")
-      await mixAudioFiles(trackPaths, ffmpegPath, outputPath)
-      _log("ffmpeg 믹싱 완료")
-    }
-
-    // 믹싱 결과 사본 저장 (확인용)
+    // 업로드용 16kHz 모노
+    const ffmpegPath = getFFmpegPath()
+    ensureFFmpegExecutable(ffmpegPath)
     try {
-      const mixedDest = path.join(debugDir, "mixed.wav")
-      fs.copyFileSync(outputPath, mixedDest)
-      _log("믹싱 사본 저장: " + mixedDest)
+      fs.unlinkSync(outputPath)
+    } catch (e) {}
+
+    await mixAudioFiles(trackPaths, ffmpegPath, outputPath, 16000)
+    // 표시용 8kHz 모노 — 시각화 충분 + WaveSurfer 디코드 부하 대폭 감소 (95분 ≈ 91MB)
+    let displayMixOk = false
+    try {
+      await mixAudioFiles(trackPaths, ffmpegPath, displayPath, 8000)
+      displayMixOk = true
     } catch (e) {
-      _log("믹싱 사본 저장 실패: " + e.message)
+      console.warn("[renderAudioAndRead] display mix 실패:", e.message)
     }
 
-    // 멀티채널 WAV 추가 생성 (게이팅 → amerge, 트랙 2개 이상일 때만)
-    // if (trackPaths.length >= 2) {
-    //   try {
-    //     const multiChannelDir = path.join(homeDir, ".videoPlus", "multichannel")
-    //     try { fs.mkdirSync(multiChannelDir, { recursive: true }) } catch (e) {}
-    //     const ffmpegPath = getFFmpegPath()
-    //     ensureFFmpegExecutable(ffmpegPath)
-    //
-    //     // 1) 게이팅: 크로스토크/블리드 제거
-    //     const gatedDir = path.join(debugDir, "gated")
-    //     try { fs.mkdirSync(gatedDir, { recursive: true }) } catch (e) {}
-    //     _log("멀티채널용 게이팅 시작: " + trackPaths.length + "개 트랙")
-    //     const gatedPaths = await gateAudioTracks(trackPaths, ffmpegPath, gatedDir)
-    //     _log("게이팅 완료: " + gatedDir)
-    //
-    //     // 2) 게이팅된 트랙으로 멀티채널 WAV 생성
-    //     const multiChannelPath = path.join(
-    //       multiChannelDir,
-    //       `multichannel_${ts}_${trackPaths.length}ch.wav`,
-    //     )
-    //     await createMultiChannelAudio(gatedPaths, ffmpegPath, multiChannelPath)
-    //     _log(`멀티채널(${trackPaths.length}ch) 저장: ${multiChannelPath}`)
-    //   } catch (e) {
-    //     _log("멀티채널 생성 실패: " + e.message)
-    //   }
-    // }
+    // 멀티채널 WAV 생성 (pure-JS 크로스토크 제거 → N-ch WAV 직접 작성)
+    let multiChannelPath = null
+    if (trackPaths.length >= 2) {
+      try {
+        const multiChannelDir = path.join(homeDir, ".videoPlus", "multichannel")
+        try {
+          fs.mkdirSync(multiChannelDir, { recursive: true })
+        } catch (e) {}
 
-    // 3. 트랙별 임시 파일 정리
+        const wavs = trackPaths.map((p) => readWav(p))
+        const sr = wavs[0].sampleRate
+        for (const w of wavs) {
+          if (w.sampleRate !== sr) {
+            throw new Error(`샘플레이트 불일치: ${sr} vs ${w.sampleRate}`)
+          }
+        }
+        let monos = wavs.map((w) => toMono(w))
+
+        const lengths = monos.map((m) => m.length)
+        const n = Math.min(...lengths)
+        const maxLen = Math.max(...lengths)
+        if (maxLen !== n) {
+          monos = monos.map((m) => (m.length === n ? m : m.slice(0, n)))
+        }
+
+        // STT용 다운샘플링 (정수비율만 — 보통 48kHz → 16kHz)
+        let workSr = sr
+        if (sr > STT_TARGET_SR && sr % STT_TARGET_SR === 0) {
+          monos = monos.map((m) => downsample(m, sr, STT_TARGET_SR))
+          workSr = STT_TARGET_SR
+        }
+
+        // N-트랙 사이드체인 게이트
+        //   ratioDb: 0 → argmax 트랙만 열림
+        //   reductionDb: -90 → bleed 잔류를 16-bit 양자화 잡음 이하로
+        //   attackMs: 30 (느린 open), releaseMs: 3 (빠른 close)
+        //     → bleed 새기 전 즉시 닫고, 채터링성 일시 argmax 반전에도 gate가 별로 안 열림
+        const cleaned = crosstalkReduceMulti(monos, workSr, {
+          envMs: 30,
+          ratioDb: 0,
+          reductionDb: -90,
+          attackMs: 30,
+          releaseMs: 3,
+        })
+
+        multiChannelPath = path.join(
+          multiChannelDir,
+          `multichannel_${ts}_${cleaned.length}ch.wav`,
+        )
+        writeWav16(multiChannelPath, cleaned, workSr)
+      } catch (e) {
+        multiChannelPath = null
+      }
+    }
+
+    // 트랙별 임시 파일 정리
     trackPaths.forEach((p) => {
       try {
         if (p !== outputPath) fs.unlinkSync(p)
       } catch (e) {}
     })
 
-    // 4. ArrayBuffer로 읽기
-    const arrayBuffer = await readFileAsArrayBuffer(outputPath)
-    return { arrayBuffer, audioPath: outputPath }
+    // 업로드 대상 결정: 멀티채널 WAV 우선, 실패/단일트랙 시 모노 amix 폴백
+    const uploadPath = multiChannelPath || outputPath
+    const isMultichannel = !!multiChannelPath
+    const arrayBuffer = await readFileAsArrayBuffer(uploadPath)
+    // audioPath는 화면 표시용 — 48kHz mono amix (gate 없음, 풀 샘플레이트)
+    // displayPath 생성 실패한 경우 outputPath로 폴백
+    // 매번 다른 문자열이 되도록 timestamp suffix — 같은 파일 경로여도 React/wavesurfer가 재로드
+    const displayAudioPath = displayMixOk ? displayPath : outputPath
+    const versionedAudioPath = `${displayAudioPath}?v=${Date.now()}`
+    return {
+      arrayBuffer,
+      audioPath: versionedAudioPath,
+      uploadPath,
+      isMultichannel,
+    }
   } catch (err) {
-    _log("트랙별 렌더링+믹싱 실패: " + err.message + " → 폴백(전체 렌더링)")
-
     // 폴백: 기존 방식 (전체 시퀀스 한 번에 렌더링)
     const result = await renderAudio()
     if (!result.success) {
       throw new Error(result.error || "렌더링 실패")
     }
     const arrayBuffer = await readFileAsArrayBuffer(result.outputPath)
-    return { arrayBuffer, audioPath: result.outputPath }
+    return {
+      arrayBuffer,
+      audioPath: result.outputPath,
+      uploadPath: result.outputPath,
+      isMultichannel: false,
+    }
   }
 }
 
 /**
- * 렌더링된 오디오 파일 정리 (받아쓰기 완료 후 호출)
+ * 받아쓰기 완료/취소 후 임시 오디오 파일 일괄 정리
+ *   - 표시용 8kHz mono: ~/.videoPlus/videoplus_display_*.wav
+ *   - STT 업로드용 16kHz mono: ~/.videoPlus/videoplus_audio.wav
+ *   - STT 업로드용 멀티채널 WAV: ~/.videoPlus/multichannel/multichannel_*.wav
+ * 디스크 누적 방지 (회당 수백 MB ~ 수 GB)
  */
 export function cleanupAudioFile(audioPath) {
-  if (audioPath) {
-    deleteFile(audioPath).catch(() => {})
+  try {
+    const fs = require("fs")
+    const path = require("path")
+    const os = require("os")
+    const baseDir = path.join(os.homedir(), ".videoPlus")
+
+    // 1) 표시용 display_*.wav 일괄 삭제
+    try {
+      const entries = fs.readdirSync(baseDir)
+      for (const entry of entries) {
+        if (entry.startsWith("videoplus_display_") && entry.endsWith(".wav")) {
+          try {
+            fs.unlinkSync(path.join(baseDir, entry))
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+
+    // 2) 업로드용 mono mix
+    try {
+      fs.unlinkSync(path.join(baseDir, "videoplus_audio.wav"))
+    } catch (e) {}
+
+    // 3) 업로드용 멀티채널 WAV 일괄 삭제
+    try {
+      const multiDir = path.join(baseDir, "multichannel")
+      const multiEntries = fs.readdirSync(multiDir)
+      for (const entry of multiEntries) {
+        if (entry.startsWith("multichannel_") && entry.endsWith(".wav")) {
+          try {
+            fs.unlinkSync(path.join(multiDir, entry))
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+
+    // 4) 호출자가 명시한 경로 (cache-buster 쿼리 떼고 보조 삭제)
+    if (audioPath) {
+      const cleanPath = audioPath.split("?")[0]
+      deleteFile(cleanPath).catch(() => {})
+    }
+  } catch (e) {
+    console.warn("[cleanupAudioFile] 예외:", e.message)
   }
+}
+
+/**
+ * 표시용 WAV 파일에서 peaks(픽셀당 최대 진폭) 사전 계산
+ * WaveSurfer가 직접 디코드(decodeAudioData)하지 않도록 우회 — 장시간 오디오에서 디코드 실패 회피
+ * @param {string} filePath - 로컬 WAV 파일 경로
+ * @param {number} pixelsPerSec - WaveSurfer minPxPerSec과 동일하게 (기본 200)
+ * @returns {{ peaks: number[], duration: number }}
+ */
+export function computePeaksForFile(filePath, pixelsPerSec = 200) {
+  const wav = readWav(filePath)
+  const ch = wav.channels[0]
+  const numPeaks = Math.max(
+    1,
+    Math.ceil((wav.numSamples / wav.sampleRate) * pixelsPerSec),
+  )
+  const peaks = new Array(numPeaks)
+  const chunk = wav.numSamples / numPeaks
+  for (let i = 0; i < numPeaks; i++) {
+    const start = Math.floor(i * chunk)
+    const end = Math.min(Math.floor((i + 1) * chunk), wav.numSamples)
+    let max = 0
+    for (let j = start; j < end; j++) {
+      const abs = Math.abs(ch[j])
+      if (abs > max) max = abs
+    }
+    peaks[i] = max
+  }
+  return { peaks, duration: wav.numSamples / wav.sampleRate }
 }
 
 /**

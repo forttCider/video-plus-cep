@@ -168,9 +168,13 @@ const Word = React.memo(
       prevProps.isSearchMatch === nextProps.isSearchMatch &&
       prevProps.isCurrentSearchMatch === nextProps.isCurrentSearchMatch &&
       prevProps.isEditing === nextProps.isEditing &&
+      prevProps.sentenceIdx === nextProps.sentenceIdx &&
+      prevProps.wordIdx === nextProps.wordIdx &&
       prevProps.word.is_deleted === nextProps.word.is_deleted &&
       prevProps.word.is_edit === nextProps.word.is_edit &&
-      prevProps.word.text === nextProps.word.text
+      prevProps.word.text === nextProps.word.text &&
+      prevProps.word.start_at === nextProps.word.start_at &&
+      prevProps.word.end_at === nextProps.word.end_at
     )
   },
 )

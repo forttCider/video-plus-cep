@@ -23,6 +23,8 @@ export default function useTranscribe({
   saveState,
   setSummary,
   setSummaryLoading,
+  setSummaryError,
+  setSummaryTaskId,
   numSpeakersRef,
   addLog,
   setAudioPath,
@@ -33,6 +35,46 @@ export default function useTranscribe({
   setIsPlayingState,
   timelineIndexRef,
 }) {
+  const fetchSummary = useCallback(
+    async (taskId) => {
+      if (!taskId) return
+      setSummaryTaskId(taskId)
+      setSummaryError(false)
+      setSummary(null)
+      setSummaryLoading(true)
+      addLog(
+        "info",
+        `요약본 API 요청 시작 (taskId: ${taskId}, spk_count: ${numSpeakersRef?.current || 2})`,
+      )
+      try {
+        const res = await fetch(
+          `${API_URL}/transcribe/summary/${taskId}?spk_count=${numSpeakersRef?.current || 2}`,
+        )
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        const segments = data?.data?.segments || data?.segments
+        if (!segments || segments.length === 0) {
+          throw new Error("요약 결과 없음")
+        }
+        setSummary(data)
+        addLog("info", "요약본 불러오기 완료")
+      } catch (e) {
+        addLog("warn", `요약본 불러오기 실패: ${e.message}`)
+        setSummaryError(true)
+      } finally {
+        setSummaryLoading(false)
+      }
+    },
+    [
+      setSummary,
+      setSummaryLoading,
+      setSummaryError,
+      setSummaryTaskId,
+      numSpeakersRef,
+      addLog,
+    ],
+  )
+
   const handleTranscribeFinish = useCallback(
     async (taskId) => {
       if (!taskId) return
@@ -135,19 +177,7 @@ export default function useTranscribe({
         addLog("info", "편집 상태 저장 완료")
 
         // 요약본 불러오기 (백그라운드)
-        setSummaryLoading(true)
-        addLog("info", `요약본 API 요청 시작 (taskId: ${taskId}, spk_count: ${numSpeakersRef?.current || 2})`)
-        fetch(`${API_URL}/transcribe/summary/${taskId}?spk_count=${numSpeakersRef?.current || 2}`)
-          .then((res) => res.json())
-          .then((data) => {
-            addLog("info", `요약본 API 응답 수신 (data: ${data ? JSON.stringify(data).slice(0, 200) : "null"})`)
-            if (data) {
-              setSummary(data)
-              addLog("info", "요약본 불러오기 완료")
-            }
-          })
-          .catch((e) => addLog("warn", `요약본 불러오기 실패: ${e.message}`))
-          .finally(() => setSummaryLoading(false))
+        fetchSummary(taskId)
       } catch (e) {
         setStatus("결과 가져오기 실패: " + e.message)
       }
@@ -160,8 +190,7 @@ export default function useTranscribe({
       setOriginalSpkList,
       setHasSavedState,
       saveState,
-      setSummary,
-      numSpeakersRef,
+      fetchSummary,
       addLog,
     ],
   )
@@ -188,5 +217,5 @@ export default function useTranscribe({
     timelineIndexRef,
   ])
 
-  return { handleTranscribeFinish, resetAllState }
+  return { handleTranscribeFinish, resetAllState, fetchSummary }
 }
