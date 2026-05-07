@@ -1,7 +1,38 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react"
 import WaveSurfer from "wavesurfer.js"
 import RegionsPlugin from "wavesurfer.js/dist/plugin/wavesurfer.regions.min.js"
+import { computePeaksForFile } from "../js/cep-bridge"
 import "./css/WaveformPanel.css"
+
+/**
+ * 정규화 + 다이내믹 레인지 압축
+ *   1) 최대값으로 정규화 → 모든 peak이 [-1, 1] 범위
+ *   2) sign(x) * |x|^exponent — 작은 peak을 시각적으로 키움
+ *
+ * 큰 peak은 canvas 끝에 그대로 닿고(클리핑 없음), 작은 peak/숨소리가
+ * 비례 이상으로 보이게 됨. exponent < 1 일수록 더 압축.
+ *   exponent=0.5: 0.1 → 0.32, 0.5 → 0.71 (적당)
+ *   exponent=0.3: 0.1 → 0.50, 0.5 → 0.81 (강한 압축)
+ *   exponent=1.0: 변환 안 함 (단순 정규화)
+ */
+function normalizePeaksP90(peaks, exponent = 0.5) {
+  if (!peaks || peaks.length === 0) return peaks
+  let absMax = 0
+  for (let i = 0; i < peaks.length; i++) {
+    const v = Math.abs(peaks[i])
+    if (v > absMax) absMax = v
+  }
+  if (absMax <= 0) return peaks
+  const isFloat32 = peaks instanceof Float32Array
+  const out = isFloat32 ? new Float32Array(peaks.length) : new Array(peaks.length)
+  for (let i = 0; i < peaks.length; i++) {
+    const norm = peaks[i] / absMax
+    out[i] = norm >= 0
+      ? Math.pow(norm, exponent)
+      : -Math.pow(-norm, exponent)
+  }
+  return out
+}
 
 export default function WaveformPanel({
   audioPath,
@@ -107,8 +138,8 @@ export default function WaveformPanel({
       cursorColor: "#fff",
       cursorWidth: 2,
       height: 100,
-      barHeight: 3,
-      normalize: true,
+      barHeight: 1,
+      normalize: false,
       minPxPerSec: 200,
       scrollParent: true,
       backend: "MediaElement",
@@ -243,7 +274,7 @@ export default function WaveformPanel({
     // peaks가 있고 audioPath가 없으면 → peaks만으로 파형 렌더링 (오디오 불필요)
     if (peaks && peaks.length > 0 && !audioPath) {
       const ws = wavesurferRef.current
-      ws.backend.peaks = peaks
+      ws.backend.peaks = normalizePeaksP90(peaks)
       ws.backend.getPlayedPercents = () => 0
       ws.backend.getDuration = () => peaksDuration
       setDuration(peaksDuration)
@@ -283,7 +314,26 @@ export default function WaveformPanel({
       if (!cleanPath.startsWith("blob:") && !cleanPath.startsWith("file://")) {
         url = `file://${cleanPath}`
       }
-      wavesurferRef.current.load(url)
+      // 로컬 파일이면 직접 peaks 계산 후 정규화+압축 적용
+      let preparedPeaks = null
+      let preparedDuration = null
+      try {
+        const localPath = cleanPath.startsWith("file://")
+          ? cleanPath.replace(/^file:\/\//, "")
+          : cleanPath
+        if (localPath.startsWith("/")) {
+          const result = computePeaksForFile(localPath, 200)
+          preparedPeaks = normalizePeaksP90(result.peaks)
+          preparedDuration = result.duration
+        }
+      } catch (e) {
+        console.warn("[WaveformPanel] peaks 사전계산 실패, 기본 디코드 경로:", e.message)
+      }
+      if (preparedPeaks && preparedDuration) {
+        wavesurferRef.current.load(url, preparedPeaks, "metadata", preparedDuration)
+      } else {
+        wavesurferRef.current.load(url)
+      }
     }
   }, [audioPath, peaks, containerVisible])
 
