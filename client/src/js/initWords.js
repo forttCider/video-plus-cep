@@ -81,6 +81,14 @@ export function restoreWords(sentences) {
           restored[field] = BigInt(restored[field])
         }
       }
+      // original_* 필드 마이그레이션 (예전 저장 데이터엔 없을 수 있음)
+      // 누락이면 현재 start_at/end_at을 원본으로 간주 → ↺ 버튼 안 보임
+      if (restored.original_start_at == null) {
+        restored.original_start_at = restored.start_at
+      }
+      if (restored.original_end_at == null) {
+        restored.original_end_at = restored.end_at
+      }
       return restored
     }),
   }

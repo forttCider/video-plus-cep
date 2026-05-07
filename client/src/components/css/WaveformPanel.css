@@ -155,6 +155,41 @@
   background-color: rgba(255, 230, 0, 0.35) !important;
 }
 
+/* 드래그된 region 시각 큐 (원본 시간과 다름) */
+.waveform-container .region-dragged {
+  border-left: 2px solid rgba(255, 200, 0, 0.95) !important;
+  border-right: 2px solid rgba(255, 200, 0, 0.95) !important;
+  box-shadow: 0 0 0 1px rgba(255, 200, 0, 0.4) inset;
+}
+
+/* ↺ 리셋 버튼 — region 우상단 */
+.waveform-container .region-reset-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid rgba(255, 200, 0, 0.9);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #ffd700;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: bold;
+  cursor: pointer;
+  pointer-events: all;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+.waveform-container .region-reset-btn:hover {
+  background: rgba(255, 200, 0, 0.2);
+  color: #fff;
+}
+
 /* 🔥 드래그 제한 경계 닿을 때 빨간색 핸들 */
 .waveform-container .wavesurfer-handle.handle-limit {
   border-left: 4px solid #ff4444 !important;
