@@ -42,6 +42,8 @@ export default function CutEditTab({
   onSelectFiller,
   summary,
   summaryLoading,
+  summaryError,
+  onRetrySummary,
   focusedWord,
   currentWordId,
   currentWordSentenceIdx,
@@ -141,7 +143,7 @@ export default function CutEditTab({
         </div>
 
         {/* 요약 */}
-        {(summary || summaryLoading) && (
+        {(summary || summaryLoading || summaryError) && (
           <>
             <div className="flex items-center justify-between px-4 py-2 border-b border-border">
               <span className="text-xs text-muted-foreground">스크립트 개요</span>
@@ -176,7 +178,13 @@ export default function CutEditTab({
               )}
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
-              <SummaryPanel summary={summary} loading={summaryLoading} onSeek={onSummarySeek} />
+              <SummaryPanel
+                summary={summary}
+                loading={summaryLoading}
+                error={summaryError}
+                onRetry={onRetrySummary}
+                onSeek={onSummarySeek}
+              />
             </div>
           </>
         )}

@@ -1,7 +1,38 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react"
 import WaveSurfer from "wavesurfer.js"
 import RegionsPlugin from "wavesurfer.js/dist/plugin/wavesurfer.regions.min.js"
+import { computePeaksForFile } from "../js/cep-bridge"
 import "./css/WaveformPanel.css"
+
+/**
+ * 정규화 + 다이내믹 레인지 압축
+ *   1) 최대값으로 정규화 → 모든 peak이 [-1, 1] 범위
+ *   2) sign(x) * |x|^exponent — 작은 peak을 시각적으로 키움
+ *
+ * 큰 peak은 canvas 끝에 그대로 닿고(클리핑 없음), 작은 peak/숨소리가
+ * 비례 이상으로 보이게 됨. exponent < 1 일수록 더 압축.
+ *   exponent=0.5: 0.1 → 0.32, 0.5 → 0.71 (적당)
+ *   exponent=0.3: 0.1 → 0.50, 0.5 → 0.81 (강한 압축)
+ *   exponent=1.0: 변환 안 함 (단순 정규화)
+ */
+function normalizePeaksP90(peaks, exponent = 0.5) {
+  if (!peaks || peaks.length === 0) return peaks
+  let absMax = 0
+  for (let i = 0; i < peaks.length; i++) {
+    const v = Math.abs(peaks[i])
+    if (v > absMax) absMax = v
+  }
+  if (absMax <= 0) return peaks
+  const isFloat32 = peaks instanceof Float32Array
+  const out = isFloat32 ? new Float32Array(peaks.length) : new Array(peaks.length)
+  for (let i = 0; i < peaks.length; i++) {
+    const norm = peaks[i] / absMax
+    out[i] = norm >= 0
+      ? Math.pow(norm, exponent)
+      : -Math.pow(-norm, exponent)
+  }
+  return out
+}
 
 export default function WaveformPanel({
   audioPath,
@@ -33,6 +64,8 @@ export default function WaveformPanel({
   const [isRegionsLoading, setIsRegionsLoading] = useState(false)
   const [duration, setDuration] = useState(0)
   const [scrollTrigger, setScrollTrigger] = useState(0)
+  const [containerVisible, setContainerVisible] = useState(false)
+  const loadedAudioPathRef = useRef(null)
 
   useEffect(() => {
     onWordTimeChangeRef.current = onWordTimeChange
@@ -105,7 +138,8 @@ export default function WaveformPanel({
       cursorColor: "#fff",
       cursorWidth: 2,
       height: 100,
-      normalize: true,
+      barHeight: 1,
+      normalize: false,
       minPxPerSec: 200,
       scrollParent: true,
       backend: "MediaElement",
@@ -120,7 +154,8 @@ export default function WaveformPanel({
     wavesurferRef.current = ws
 
     ws.on("ready", () => {
-      setDuration(ws.getDuration())
+      const dur = ws.getDuration()
+      setDuration(dur)
 
       setTimeout(() => {
         setIsReady(true)
@@ -222,10 +257,15 @@ export default function WaveformPanel({
     }
   }, [])
 
-  // 오디오 파일 로드
+  // 오디오 파일 로드 (container가 visible해진 후에만 실행 — hidden 상태에선
+  // ws.load 시 wrapper width=0이라 canvas anchor가 모두 0으로 잘못 계산됨)
   useEffect(() => {
     if (!wavesurferRef.current) return
+    if (!containerVisible) return
     if (!audioPath && !(peaks && peaks.length > 0)) return
+    // 같은 audioPath 재load 방지 (visibility 토글 시)
+    if (audioPath && audioPath === loadedAudioPathRef.current) return
+    loadedAudioPathRef.current = audioPath || null
 
     setIsReady(false)
     activeRegionsRef.current.clear()
@@ -234,7 +274,7 @@ export default function WaveformPanel({
     // peaks가 있고 audioPath가 없으면 → peaks만으로 파형 렌더링 (오디오 불필요)
     if (peaks && peaks.length > 0 && !audioPath) {
       const ws = wavesurferRef.current
-      ws.backend.peaks = peaks
+      ws.backend.peaks = normalizePeaksP90(peaks)
       ws.backend.getPlayedPercents = () => 0
       ws.backend.getDuration = () => peaksDuration
       setDuration(peaksDuration)
@@ -264,16 +304,38 @@ export default function WaveformPanel({
 
     if (!audioPath) return
 
-    if (audioPath.startsWith("http")) {
-      wavesurferRef.current.load(audioPath)
+    // ?v=timestamp suffix는 cache-buster 용도. 실제 파일 경로엔 포함되면 안 됨
+    const cleanPath = audioPath.split("?")[0]
+
+    if (cleanPath.startsWith("http")) {
+      wavesurferRef.current.load(cleanPath)
     } else {
-      let url = audioPath
-      if (!audioPath.startsWith("blob:") && !audioPath.startsWith("file://")) {
-        url = `file://${audioPath}`
+      let url = cleanPath
+      if (!cleanPath.startsWith("blob:") && !cleanPath.startsWith("file://")) {
+        url = `file://${cleanPath}`
       }
-      wavesurferRef.current.load(url)
+      // 로컬 파일이면 직접 peaks 계산 후 정규화+압축 적용
+      let preparedPeaks = null
+      let preparedDuration = null
+      try {
+        const localPath = cleanPath.startsWith("file://")
+          ? cleanPath.replace(/^file:\/\//, "")
+          : cleanPath
+        if (localPath.startsWith("/")) {
+          const result = computePeaksForFile(localPath, 200)
+          preparedPeaks = normalizePeaksP90(result.peaks)
+          preparedDuration = result.duration
+        }
+      } catch (e) {
+        console.warn("[WaveformPanel] peaks 사전계산 실패, 기본 디코드 경로:", e.message)
+      }
+      if (preparedPeaks && preparedDuration) {
+        wavesurferRef.current.load(url, preparedPeaks, "metadata", preparedDuration)
+      } else {
+        wavesurferRef.current.load(url)
+      }
     }
-  }, [audioPath, peaks])
+  }, [audioPath, peaks, containerVisible])
 
   // 🔥 다시 받아쓰기 시 이전 regions 정리
   useEffect(() => {
@@ -433,6 +495,40 @@ export default function WaveformPanel({
   useEffect(() => {
     scrollToCursorRef.current = scrollToCursor
   }, [scrollToCursor])
+
+  // container visibility 추적 — width>0 되면 audio load 트리거
+  // 이후 resize 시 region 가시 범위 재계산 (200ms debounce)
+  useEffect(() => {
+    if (!containerRef.current) return
+    const target = containerRef.current
+    let didSetVisible = false
+    let resizeTimeout = null
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        if (e.contentRect.width > 0) {
+          if (!didSetVisible) {
+            didSetVisible = true
+            setContainerVisible(true)
+          } else {
+            if (resizeTimeout) return
+            resizeTimeout = setTimeout(() => {
+              setScrollTrigger((n) => n + 1)
+              resizeTimeout = null
+            }, 200)
+          }
+        }
+      }
+    })
+    ro.observe(target)
+    if (target.getBoundingClientRect().width > 0) {
+      didSetVisible = true
+      setContainerVisible(true)
+    }
+    return () => {
+      ro.disconnect()
+      if (resizeTimeout) clearTimeout(resizeTimeout)
+    }
+  }, [])
 
   // 재생 중 커서 업데이트
   useEffect(() => {

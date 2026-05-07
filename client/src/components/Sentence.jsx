@@ -175,6 +175,8 @@ const Sentence = forwardRef(
                 <Word
                   key={word.id}
                   word={word}
+                  sentenceIdx={sentenceIdx}
+                  wordIdx={wordIdx}
                   isCurrentWord={currentWordId === word.start_at}
                   isFocused={isFocused}
                   isSelected={isSelected}
@@ -234,6 +236,7 @@ export default React.memo(Sentence, (prevProps, nextProps) => {
 
   return (
     prevProps.sentence === nextProps.sentence &&
+    prevProps.sentenceIdx === nextProps.sentenceIdx &&
     !focusedChanged &&
     !currentChanged &&
     !editingChanged &&

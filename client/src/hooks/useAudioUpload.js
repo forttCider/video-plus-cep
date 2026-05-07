@@ -21,6 +21,7 @@ export default function useAudioUpload({
   onStart,
   addLog,
   numSpeakersRef,
+  selectedTrackIndicesRef,
 }) {
   const [isUpload, setIsUpload] = useState(false)
   const [isCanceled, setIsCanceled] = useState(false)
@@ -37,6 +38,7 @@ export default function useAudioUpload({
   const isErrorRef = useRef(false)
   const currentTaskIdRef = useRef(null) // 🔥 현재 진행 중인 taskId
   const abortControllerRef = useRef(null) // 🔥 fetch 취소용
+  const isMultichannelRef = useRef(false) // 🔥 현재 업로드가 멀티채널 WAV인지
 
   // 렌더링 + 업로드 시작
   const onClickRenderAudio = async () => {
@@ -74,15 +76,43 @@ export default function useAudioUpload({
     addLog && addLog("info", "오디오 렌더링 시작...")
 
     try {
+      // 선택된 트랙 인덱스 (없으면 전체 렌더)
+      const trackIndices = selectedTrackIndicesRef?.current
+        ? Array.from(selectedTrackIndicesRef.current).sort((a, b) => a - b)
+        : undefined
+      if (trackIndices && trackIndices.length > 0) {
+        addLog &&
+          addLog("info", `선택된 오디오 트랙: [${trackIndices.join(", ")}]`)
+      }
+
       // 오디오 렌더링 + ArrayBuffer 읽기
       const result = await renderAudioAndRead(
         (msg) => addLog && addLog("info", msg),
+        { trackIndices },
       )
 
-      const { arrayBuffer, audioPath: renderedAudioPath } = result
+      const {
+        arrayBuffer,
+        audioPath: renderedAudioPath, // 표시용 (mono amix)
+        uploadPath, // 실제 업로드된 파일 경로 (로그용)
+        isMultichannel,
+      } = result
 
-      // 오디오 경로 저장 (파형 표시용)
+      // 오디오 경로 저장 (파형 표시용 — gate 안 걸린 mono amix)
       setAudioPath(renderedAudioPath)
+
+      // 업로드 엔드포인트 결정: 멀티채널 WAV면 /transcribe/multichannel, 아니면 /transcribe
+      isMultichannelRef.current = !!isMultichannel
+
+      // 업로드 대상 파일 로그 (실제 업로드되는 파일)
+      const uploadFileName = uploadPath
+        ? uploadPath.split(/[\\/]/).pop()
+        : "(경로 없음)"
+      addLog &&
+        addLog(
+          "info",
+          `업로드 파일: ${uploadFileName} (엔드포인트: ${isMultichannel ? "/transcribe/multichannel" : "/transcribe"})`,
+        )
 
       setUploadFile((prev) => ({
         ...prev,
@@ -91,7 +121,7 @@ export default function useAudioUpload({
       }))
 
       // 업로드 큐 등록
-      await publishQueue(arrayBuffer)
+      await publishQueue(arrayBuffer, uploadFileName)
     } catch (error) {
       console.error("[useAudioUpload] 렌더링 오류:", error)
       addLog && addLog("error", "오디오 렌더링 실패: " + error.message)
@@ -105,11 +135,12 @@ export default function useAudioUpload({
   }
 
   // 업로드 큐 등록
-  const publishQueue = async (arrayBuffer) => {
+  const publishQueue = async (arrayBuffer, filename = "audio.wav") => {
     addLog && addLog("info", "받아쓰기 요청 중...")
     const queueUrl = `${API_URL}/transcribe/queue`
     const fileSizeMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(2)
     addLog && addLog("info", `요청 URL: ${queueUrl}`)
+    addLog && addLog("info", `업로드 파일명: ${filename}`)
     addLog &&
       addLog(
         "info",
@@ -124,7 +155,7 @@ export default function useAudioUpload({
         addLog("info", `documentID: ${documentID}, sequenceID: ${seqInfo?.id}`)
 
       const requestBody = JSON.stringify({
-        filename: "audio.wav",
+        filename,
         file_size: arrayBuffer.byteLength,
         num_speakers: numSpeakersRef?.current || 2,
       })
@@ -264,7 +295,10 @@ export default function useAudioUpload({
           `[청크 업로드] chunk_index=${chunkIndex}, spk_count=${numSpeakersRef?.current || "(없음)"}`,
         )
 
-      const response = await fetch(`${API_URL}/transcribe`, {
+      const endpoint = isMultichannelRef.current
+        ? `${API_URL}/transcribe/multichannel`
+        : `${API_URL}/transcribe`
+      const response = await fetch(endpoint, {
         method: "POST",
         body: formData,
         signal: abortControllerRef.current?.signal, // 🔥 취소 가능하게

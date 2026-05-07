@@ -8,37 +8,6 @@ import { getTimelinePositionTick } from "./calculateTimeOffset"
 export const FILLER_TYPES = ["interjection"]
 
 /**
- * 단어가 다른 단어들과 시간상 겹치는지 확인
- * @param {Object} word - 확인할 단어
- * @param {Array} allWords - 모든 단어 배열 (삭제 안 된 것들)
- * @returns {boolean} - 겹치면 true
- */
-function isOverlapping(word, allWords) {
-  const wordStart = word.start_at
-  const wordEnd = word.end_at
-
-  for (const other of allWords) {
-    // 자기 자신은 스킵
-    if ((other.id || other.start_at) === (word.id || word.start_at)) continue
-    // 이미 삭제된 단어는 스킵
-    if (other.is_deleted) continue
-
-    const otherStart = other.start_at
-    const otherEnd = other.end_at
-
-    // 겹침 체크: 두 구간이 겹치는지
-    // (A.start < B.end) && (A.end > B.start)
-    if (wordStart < otherEnd && wordEnd > otherStart) {
-      // 완전히 같은 구간이 아니고, 부분적으로 겹치면 true
-      if (!(wordStart === otherStart && wordEnd === otherEnd)) {
-        return true
-      }
-    }
-  }
-  return false
-}
-
-/**
  * 인접 기반 그룹핑: 선택된 단어 사이에 비삭제/비선택 단어가 없으면 같은 그룹
  * @param {Array} selectedWords - 선택된 단어 (시간순 정렬됨)
  * @param {Array} allWords - 전체 단어 목록
@@ -59,11 +28,13 @@ function groupConsecutiveWords(selectedWords, allWords) {
     const prev = sortedSelected[i - 1]
     const curr = sortedSelected[i]
 
-    // prev와 curr 사이에 비삭제/비선택 단어가 있는지 확인
+    // prev와 curr 사이에 "실제 타임라인 클립인 잔존 단어"가 있는지 확인
     const hasActiveWordBetween = sortedAll.some((w) => {
       const wId = w.id || w.start_at
       if (selectedIds.has(wId)) return false
       if (w.is_deleted) return false
+      // 편집 마커(무음 등 is_edit) — 타임라인에 클립 없음 → 그룹 분리 사유 아님
+      if (w.is_edit) return false
       // prev.end_at ~ curr.start_at 사이에 있는 단어
       return w.start_at >= prev.end_at && w.end_at <= curr.start_at
     })
@@ -85,11 +56,13 @@ function groupConsecutiveWords(selectedWords, allWords) {
 
 /**
  * 그룹 내 각 단어의 gap_after_tick 계산
- * (다음 단어 start_at_tick - 현재 단어 end_at_tick)
+ *   - 그룹 내 다음 단어와의 raw gap 에서 "이미 is_deleted된 단어"가 차지하는 시간을 빼야
+ *     (이전 삭제에서 이미 offset에 누적된 부분이 중복 카운트되지 않음)
  * @param {Array<Array>} groups - 그룹 배열
+ * @param {Array} allWords - 전체 단어 (이미 삭제된 단어 정보 조회용)
  * @returns {Map<any, BigInt>} wordId → gap_after_tick
  */
-function calculateGroupGaps(groups) {
+function calculateGroupGaps(groups, allWords) {
   const wordGaps = new Map()
 
   for (const group of groups) {
@@ -99,8 +72,25 @@ function calculateGroupGaps(groups) {
 
       if (i < group.length - 1) {
         const nextWord = group[i + 1]
-        const gap =
+        const rawGap =
           BigInt(nextWord.start_at_tick || 0) - BigInt(word.end_at_tick || 0)
+
+        // word.end ~ nextWord.start 사이의 이미 is_deleted된 단어들 길이 합산
+        let alreadyDeletedTick = 0n
+        const wEnd = BigInt(word.end_at_tick || 0)
+        const nStart = BigInt(nextWord.start_at_tick || 0)
+        for (const other of allWords) {
+          if (!other.is_deleted) continue
+          const oStart = BigInt(other.start_at_tick || 0)
+          const oEnd = BigInt(other.end_at_tick || 0)
+          // 완전히 word와 nextWord 사이에 들어가는 already-deleted만
+          if (oStart >= wEnd && oEnd <= nStart) {
+            const oGap = BigInt(other.gap_after_tick || 0)
+            alreadyDeletedTick += oEnd - oStart + oGap
+          }
+        }
+
+        const gap = rawGap - alreadyDeletedTick
         wordGaps.set(wordId, gap > 0n ? gap : 0n)
       } else {
         wordGaps.set(wordId, 0n)
@@ -119,23 +109,10 @@ function calculateGroupGaps(groups) {
  * @returns {Promise<{deletedWordIds: Set, success: boolean}>}
  */
 export async function batchDeleteWords(filterFn, sentences, onProgress, addLog, signal) {
-  // 0. 전체 단어 목록 (겹침 체크용)
-  const allWordsFlat = sentences.flatMap((s) =>
-    s.words.map((w) => ({ ...w, sentenceStartAt: s.start_at })),
-  )
-
-  // 1. 전체 단어에서 조건에 맞는 단어 필터링 + 겹침 체크
+  // 1. 전체 단어에서 조건에 맞는 단어 필터링
   const allWords = sentences.flatMap((s) =>
     s.words
-      .filter((w) => {
-        if (!filterFn(w)) return false
-        // 겹침 체크 - 겹치면 스킵
-        if (isOverlapping(w, allWordsFlat)) {
-          addLog && addLog("warn", `⚠️ 스킵(겹침): "${w.text || ""}" (${w.start_at.toFixed(2)}s)`)
-          return false
-        }
-        return true
-      })
+      .filter(filterFn)
       .map((w) => ({ ...w, sentenceStartAt: s.start_at })),
   )
 
@@ -149,9 +126,15 @@ export async function batchDeleteWords(filterFn, sentences, onProgress, addLog, 
   // 3. 인접 기반으로 연속된 단어들을 그룹으로 묶기
   const allWordsFromSentences = sentences.flatMap((s) => s.words)
   const groups = groupConsecutiveWords(sortedWords, allWordsFromSentences)
+  // [DIAG] 그룹 결과 출력 — 어떤 단어가 어느 그룹에 묶이는지 확인
+  addLog &&
+    addLog(
+      "info",
+      `[그룹] ${groups.length}개 그룹: ${groups.map((g, gi) => `[${gi}] "${g[0].text || ""}"~"${g[g.length - 1].text || ""}" (${g.length}개)`).join(" / ")}`,
+    )
 
-  // 3-1. 그룹 내 gap 계산
-  const wordGaps = calculateGroupGaps(groups)
+  // 3-1. 그룹 내 gap 계산 (이미-삭제된 단어 시간 제외)
+  const wordGaps = calculateGroupGaps(groups, allWordsFromSentences)
 
   // 4. 그룹을 역순으로 (뒤에서부터 삭제해야 앞 위치 안 바뀜)
   const reversedGroups = [...groups].reverse()
@@ -180,16 +163,31 @@ export async function batchDeleteWords(filterFn, sentences, onProgress, addLog, 
     const groupStart = group[0] // 시간상 첫 번째 단어
     const groupEnd = group[group.length - 1] // 시간상 마지막 단어
 
-    // 타임라인 위치 계산 (삭제된 단어들의 오프셋 적용)
+    // 타임라인 시작/끝 각각 계산
+    //   - groupStart의 timeline 시작점
+    //   - groupEnd의 timeline 시작점 + groupEnd의 원본 duration
+    //   그룹 사이에 이미 삭제된 단어가 있어도 razor 범위가 실제 timeline 길이와 일치
     const { startTick: timelineStartTick } = getTimelinePositionTick(
       groupStart,
       currentSentences,
     )
+    const { startTick: groupEndTimelineStartTick } = getTimelinePositionTick(
+      groupEnd,
+      currentSentences,
+    )
+    const groupEndDuration =
+      BigInt(groupEnd.end_at_tick || 0) - BigInt(groupEnd.start_at_tick || 0)
+    const timelineEndTick = groupEndTimelineStartTick + groupEndDuration
 
-    // 그룹 전체 duration
-    const groupDuration =
-      BigInt(groupEnd.end_at_tick || 0) - BigInt(groupStart.start_at_tick || 0)
-    const timelineEndTick = timelineStartTick + groupDuration
+    // [DIAG] razor 범위 출력
+    const TICKS_PER_SEC = 254016000000n
+    const tStartSec = Number(timelineStartTick) / Number(TICKS_PER_SEC)
+    const tEndSec = Number(timelineEndTick) / Number(TICKS_PER_SEC)
+    addLog &&
+      addLog(
+        "info",
+        `[razor] "${groupStart.text || ""}"~"${groupEnd.text || ""}" timeline ${tStartSec.toFixed(3)}s~${tEndSec.toFixed(3)}s (orig ${(groupStart.start_at / 1000).toFixed(3)}~${(groupEnd.end_at / 1000).toFixed(3)}s)`,
+      )
 
     try {
       // razor + delete

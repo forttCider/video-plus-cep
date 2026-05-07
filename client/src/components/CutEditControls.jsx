@@ -1,4 +1,4 @@
-import React from "react"
+import React, { useState } from "react"
 import { Mic, AudioLines, VolumeX, MessageCircle, Loader2, ChevronDown } from "lucide-react"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
@@ -20,12 +20,34 @@ export default function CutEditControls({
   onSelectFiller,
   numSpeakers,
   onNumSpeakersChange,
+  availableAudioTracks = [],
+  selectedTrackIndices,
+  onToggleTrack,
   hasSavedState,
   isRestoring,
   onLoadSavedState,
   uploadFile,
   onClickCancel,
 }) {
+  const hasNoSelectedTracks =
+    availableAudioTracks.length > 0 &&
+    (!selectedTrackIndices || selectedTrackIndices.size === 0)
+
+  // 사용자가 받아쓰기 버튼 누르려 했지만 선택 안 한 경우만 경고 표시
+  const [attemptedWithNoSelection, setAttemptedWithNoSelection] = useState(false)
+  const showSelectionWarning = hasNoSelectedTracks && attemptedWithNoSelection
+  const handleTranscribeClick = () => {
+    if (hasNoSelectedTracks) {
+      setAttemptedWithNoSelection(true)
+      return
+    }
+    setAttemptedWithNoSelection(false)
+    onTranscribe?.()
+  }
+  // 트랙이 선택되면 경고 자동 해제
+  React.useEffect(() => {
+    if (!hasNoSelectedTracks) setAttemptedWithNoSelection(false)
+  }, [hasNoSelectedTracks])
   // 받아쓰기 전: 중앙 정렬 초기 화면
   if (sentences.length === 0) {
     return (
@@ -72,6 +94,47 @@ export default function CutEditControls({
           </p>
         </div>
 
+        {/* Audio track select card */}
+        {availableAudioTracks.length > 0 && (
+          <div className={`w-full max-w-sm border border-border rounded-lg overflow-hidden ${isUpload ? "opacity-60" : ""}`}>
+            <div className="flex items-center gap-2 px-4 py-2 bg-muted/30 border-b border-border text-left">
+              <span className="text-xs text-muted-foreground">
+                {isUpload ? "받아쓰는 오디오" : "받아쓸 오디오 선택"}
+              </span>
+              {!isUpload && showSelectionWarning && (
+                <span className="text-xs text-destructive ml-auto">
+                  오디오를 선택해주세요
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col">
+              {availableAudioTracks.map((track) => {
+                const checked = selectedTrackIndices?.has(track.trackIndex) || false
+                return (
+                  <label
+                    key={track.trackIndex}
+                    className={`flex items-center gap-2 px-4 py-2 text-left text-sm ${isUpload ? "cursor-not-allowed" : "cursor-pointer hover:bg-muted/20"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => !isUpload && onToggleTrack?.(track.trackIndex)}
+                      disabled={isUpload}
+                      className="accent-primary"
+                    />
+                    <span className="flex-1">
+                      {track.name || `오디오 ${track.trackIndex + 1}`}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {track.clipCount}개
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Speaker select card */}
         <div className={`w-full max-w-sm border border-border rounded-lg flex items-stretch overflow-hidden ${isUpload ? "opacity-50 pointer-events-none" : ""}`}>
           <span className="text-sm text-muted-foreground px-4 flex items-center bg-muted/30 border-r border-border whitespace-nowrap">
@@ -96,9 +159,9 @@ export default function CutEditControls({
 
         {/* Start button */}
         <Button
-          className="w-full max-w-sm h-10"
+          className={`w-full max-w-sm h-10 ${hasNoSelectedTracks ? "opacity-50 cursor-not-allowed" : ""}`}
           disabled={!isConnected || isUpload}
-          onClick={onTranscribe}
+          onClick={handleTranscribeClick}
         >
           {isUpload ? (
             <>
