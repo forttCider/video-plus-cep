@@ -31,10 +31,33 @@ export default function SummaryPanel({ summary, loading, error, onRetry, onSeek 
   if (!summary) return null
 
   const segments = summary.data?.segments || summary.segments || []
-  if (segments.length === 0) return null
+  const overallRaw = summary.data?.overall_summary ?? summary.overall_summary
+  const overallLines = Array.isArray(overallRaw)
+    ? overallRaw.filter(Boolean)
+    : typeof overallRaw === "string"
+      ? overallRaw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+      : []
+
+  if (segments.length === 0 && overallLines.length === 0) return null
 
   return (
     <div style={{ wordBreak: "keep-all" }}>
+      {overallLines.length > 0 && (
+        <div className="border-b border-border pb-3 mb-3 -mx-4 px-4">
+          <p className="font-bold mb-1.5" style={{ fontSize: 12 }}>전체 요약</p>
+          <div className="flex flex-col" style={{ gap: 6 }}>
+            {overallLines.map((line, i) => (
+              <p
+                key={i}
+                className="text-muted-foreground leading-snug"
+                style={{ fontSize: 12, wordBreak: "break-all" }}
+              >
+                · {line}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="flex flex-col" style={{ gap: 40 }}>
         {segments.map((seg) => (
           <div key={seg.segment_index}>

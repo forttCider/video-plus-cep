@@ -14,6 +14,7 @@ import {
 const API_URL =
   process.env.REACT_APP_VIDEO_API_URL || "https://vapi.cidermics.com"
 const CHUNK_SIZE = 64 * 1024 * 1024 // 64MB
+const UPLOAD_PROGRESS_WEIGHT = 30 // 전체 진행률 중 업로드 단계 비중 (%) — 나머지는 트랜스크립션
 
 export default function useAudioUpload({
   onFinish,
@@ -39,6 +40,18 @@ export default function useAudioUpload({
   const currentTaskIdRef = useRef(null) // 🔥 현재 진행 중인 taskId
   const abortControllerRef = useRef(null) // 🔥 fetch 취소용
   const isMultichannelRef = useRef(false) // 🔥 현재 업로드가 멀티채널 WAV인지
+  const uploadingChunksRef = useRef(false) // 🔥 청크 업로드 중에는 폴링 진행률 덮어쓰기 차단
+
+  // 에러 발생 시 렌더링된 오디오 파일 + 클라이언트 상태 정리
+  const failAndCleanup = (errorMessage) => {
+    isErrorRef.current = true
+    setIsError(true)
+    setIsUpload(false)
+    setUploadFile((prev) => (prev ? { ...prev, message: errorMessage } : null))
+    cleanupAudioFile(audioPathRef.current)
+    setAudioPath(null)
+    clearInterval(intervalRef.current)
+  }
 
   // 렌더링 + 업로드 시작
   const onClickRenderAudio = async () => {
@@ -116,7 +129,7 @@ export default function useAudioUpload({
 
       setUploadFile((prev) => ({
         ...prev,
-        message: "자막 받아쓰는 중...",
+        message: "업로드 준비 중...",
         progress: 0,
       }))
 
@@ -125,12 +138,7 @@ export default function useAudioUpload({
     } catch (error) {
       console.error("[useAudioUpload] 렌더링 오류:", error)
       addLog && addLog("error", "오디오 렌더링 실패: " + error.message)
-      isErrorRef.current = true
-      setIsError(true)
-      setIsUpload(false)
-      setUploadFile((prev) =>
-        prev ? { ...prev, message: error.message } : null,
-      )
+      failAndCleanup(error.message)
     }
   }
 
@@ -196,12 +204,7 @@ export default function useAudioUpload({
         }
         addLog &&
           addLog("error", `서버 응답 오류 ${response.status}: ${errorDetail}`)
-        isErrorRef.current = true
-        setIsError(true)
-        setIsUpload(false)
-        setUploadFile((prev) =>
-          prev ? { ...prev, message: errorDetail } : null,
-        )
+        failAndCleanup(errorDetail)
         return
       }
 
@@ -231,12 +234,7 @@ export default function useAudioUpload({
       console.error("[useAudioUpload] 큐 등록 오류:", error)
       addLog &&
         addLog("error", `서버 연결 오류: ${error.name} - ${error.message}`)
-      isErrorRef.current = true
-      setIsError(true)
-      setIsUpload(false)
-      setUploadFile((prev) =>
-        prev ? { ...prev, message: error.message } : null,
-      )
+      failAndCleanup(error.message)
     }
   }
 
@@ -248,24 +246,54 @@ export default function useAudioUpload({
     projectId,
     sequenceId,
   ) => {
-    for (let i = 0; i < totalChunks; i++) {
-      if (isCanceledRef.current || isErrorRef.current) break
+    uploadingChunksRef.current = true
+    try {
+      for (let i = 0; i < totalChunks; i++) {
+        if (isCanceledRef.current || isErrorRef.current) break
 
-      const start = i * CHUNK_SIZE
-      const end = Math.min(start + CHUNK_SIZE, arrayBuffer.byteLength)
-      const chunkBuffer = arrayBuffer.slice(start, end)
-      const chunkBlob = new Blob([chunkBuffer], { type: "audio/wav" })
+        const start = i * CHUNK_SIZE
+        const end = Math.min(start + CHUNK_SIZE, arrayBuffer.byteLength)
+        const chunkBuffer = arrayBuffer.slice(start, end)
+        const chunkBlob = new Blob([chunkBuffer], { type: "audio/wav" })
 
-      const success = await uploadSingleChunk(
-        i,
-        chunkBlob,
-        taskId,
-        projectId,
-        sequenceId,
-      )
-      if (!success) {
-        clearInterval(intervalRef.current)
-        break
+        const success = await uploadSingleChunk(
+          i,
+          chunkBlob,
+          taskId,
+          projectId,
+          sequenceId,
+        )
+        if (!success) {
+          clearInterval(intervalRef.current)
+          break
+        }
+
+        const progress = Math.floor(
+          ((i + 1) / totalChunks) * UPLOAD_PROGRESS_WEIGHT,
+        )
+        setUploadFile((prev) =>
+          prev
+            ? {
+                ...prev,
+                progress,
+                message: `오디오 업로드 중... (${i + 1}/${totalChunks})`,
+              }
+            : null,
+        )
+      }
+    } finally {
+      uploadingChunksRef.current = false
+      // 업로드 완료 → 트랜스크립션 단계로 메시지 전환 (진행률은 그대로 유지)
+      if (!isCanceledRef.current && !isErrorRef.current) {
+        setUploadFile((prev) =>
+          prev
+            ? {
+                ...prev,
+                message: "자막 받아쓰는 중...",
+                progress: UPLOAD_PROGRESS_WEIGHT,
+              }
+            : null,
+        )
       }
     }
   }
@@ -308,29 +336,19 @@ export default function useAudioUpload({
         const error = await response.json()
         addLog &&
           addLog("error", "업로드 실패: " + (error.detail || response.status))
-        isErrorRef.current = true
-        setIsError(true)
-        setIsUpload(false)
-        setUploadFile((prev) =>
-          prev ? { ...prev, message: error.detail } : null,
-        )
+        failAndCleanup(error.detail || `서버 오류 ${response.status}`)
         return false
       }
 
       return true
     } catch (error) {
-      // 🔥 abort된 경우 무시
+      // 🔥 abort된 경우 무시 (취소 핸들러가 정리 담당)
       if (error.name === "AbortError") {
         return false
       }
       console.error("[useAudioUpload] 청크 업로드 오류:", error)
       addLog && addLog("error", "업로드 오류: " + error.message)
-      isErrorRef.current = true
-      setIsError(true)
-      setIsUpload(false)
-      setUploadFile((prev) =>
-        prev ? { ...prev, message: error.message } : null,
-      )
+      failAndCleanup(error.message)
       return false
     }
   }
@@ -352,15 +370,24 @@ export default function useAudioUpload({
       if (taskId !== currentTaskIdRef.current) return
 
       const data = await response.json()
-      setUploadFile((prev) =>
-        prev
-          ? {
-              ...prev,
-              message: data.message,
-              progress: data.progress,
-            }
-          : null,
-      )
+      // 청크 업로드 중에는 서버 진행률이 청크 진행률을 덮어쓰지 않도록 차단
+      if (!uploadingChunksRef.current) {
+        // 서버 진행률(0~100) → 전체 진행률(UPLOAD_WEIGHT~100)로 매핑
+        const serverProgress =
+          typeof data.progress === "number" ? data.progress : 0
+        const mappedProgress =
+          UPLOAD_PROGRESS_WEIGHT +
+          Math.floor(serverProgress * (1 - UPLOAD_PROGRESS_WEIGHT / 100))
+        setUploadFile((prev) =>
+          prev
+            ? {
+                ...prev,
+                message: data.message,
+                progress: mappedProgress,
+              }
+            : null,
+        )
+      }
 
       if (data.status === "completed") {
         addLog && addLog("info", "받아쓰기 완료")
@@ -388,31 +415,33 @@ export default function useAudioUpload({
 
   // 취소
   const onClickCancel = async () => {
-    if (!uploadFile?.taskId) return
-
-    try {
-      await fetch(`${API_URL}/transcribe/${uploadFile.taskId}`, {
-        method: "DELETE",
-        keepalive: true,
-      })
-      // 🔥 진행 중인 fetch 중단
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort()
-        abortControllerRef.current = null
+    // 서버 취소는 taskId가 있을 때만 호출 (없으면 큐 등록 전 단계 — 서버에 등록된 게 없음)
+    if (uploadFile?.taskId) {
+      try {
+        await fetch(`${API_URL}/transcribe/${uploadFile.taskId}`, {
+          method: "DELETE",
+          keepalive: true,
+        })
+      } catch (error) {
+        // 서버 취소 실패해도 클라이언트 정리는 진행
       }
-      isCanceledRef.current = true
-      setIsCanceled(true)
-      setIsUpload(false)
-      setUploadFile(null)
-      cleanupAudioFile(audioPathRef.current) // 오디오 파일 정리
-      setAudioPath(null) // 🔥 파형 초기화
-      clearInterval(intervalRef.current)
-      currentTaskIdRef.current = null // 🔥 taskId 초기화
-      localStorage.removeItem("canceledTaskId")
-      onClose && onClose()
-    } catch (error) {
-      // 에러 무시
     }
+
+    // 🔥 클라이언트 정리는 taskId 유무와 무관하게 항상 수행
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    isCanceledRef.current = true
+    setIsCanceled(true)
+    setIsUpload(false)
+    setUploadFile(null)
+    cleanupAudioFile(audioPathRef.current) // 렌더링된 오디오 파일 정리
+    setAudioPath(null)
+    clearInterval(intervalRef.current)
+    currentTaskIdRef.current = null
+    localStorage.removeItem("canceledTaskId")
+    onClose && onClose()
   }
 
   // 정리

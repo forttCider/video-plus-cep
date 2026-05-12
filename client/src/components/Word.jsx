@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from "./ui/tooltip"
+import { refreshKeyEventsRegistration } from "../js/cep-bridge"
 import "./css/Word.css"
 
 const Word = React.memo(
@@ -39,7 +40,13 @@ const Word = React.memo(
 
       useEffect(() => {
         if (isEditing) {
-          setTimeout(() => inputRef.current?.select(), 0)
+          // 편집 input 포커스 + 텍스트 선택. 또한 CEP 키 등록을 갱신해서
+          // 화살표/Backspace 등이 Premiere로 가지 않고 input에 입력되도록 보장
+          refreshKeyEventsRegistration()
+          setTimeout(() => {
+            inputRef.current?.focus()
+            inputRef.current?.select()
+          }, 0)
         }
       }, [isEditing])
 

@@ -62,6 +62,8 @@ export function loadExtendScript() {
  * Windows: 37=←, 39=→, 40=↓, 38=↑
  * K: 75 (공통)
  */
+let _cachedKeyEvents = null
+
 export function registerKeyEvents() {
   try {
     const cs = getCSInterface()
@@ -81,6 +83,7 @@ export function registerKeyEvents() {
       }
     }
 
+    _cachedKeyEvents = keyEvents
     cs.registerKeyEventsInterest(JSON.stringify(keyEvents))
 
     // 패널이 다시 보일 때 재등록 (Premiere가 등록을 해제할 수 있음)
@@ -93,6 +96,17 @@ export function registerKeyEvents() {
     console.error("[CEP] 키보드 이벤트 등록 실패:", e)
     return false
   }
+}
+
+/**
+ * 키 등록 즉시 재적용 — visibility 변화 없이 등록이 해제됐을 때 호출
+ * 예: 단어 인라인 편집 진입 시점, 입력 element가 focus 잡기 직전
+ */
+export function refreshKeyEventsRegistration() {
+  if (!_cachedKeyEvents) return
+  try {
+    getCSInterface().registerKeyEventsInterest(JSON.stringify(_cachedKeyEvents))
+  } catch (e) {}
 }
 
 /**
@@ -695,7 +709,7 @@ export function cleanupAudioFile(audioPath) {
       fs.unlinkSync(path.join(baseDir, "videoplus_audio.wav"))
     } catch (e) {}
 
-    // 3) 업로드용 멀티채널 WAV 일괄 삭제
+    // 3) 업로드용 멀티채널 WAV 일괄 삭제 + 빈 폴더 제거
     try {
       const multiDir = path.join(baseDir, "multichannel")
       const multiEntries = fs.readdirSync(multiDir)
@@ -706,6 +720,9 @@ export function cleanupAudioFile(audioPath) {
           } catch (e) {}
         }
       }
+      try {
+        fs.rmdirSync(multiDir)
+      } catch (e) {}
     } catch (e) {}
 
     // 4) 호출자가 명시한 경로 (cache-buster 쿼리 떼고 보조 삭제)

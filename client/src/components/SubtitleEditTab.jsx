@@ -141,20 +141,27 @@ export default function SubtitleEditTab({
               }}
               onMouseUp={(e) => {
                 const val = parseInt(e.target.value, 10)
-                // 기존 화자 변경 매핑 보존 (word id → spk)
+                // 기존 화자 변경 매핑 + 자막에서 K로 토글한 is_deleted 보존
                 const wordSpkMap = new Map()
+                const wordDeletedMap = new Map()
                 subsSentences.forEach((s) => {
                   s.words?.forEach((w) => {
-                    if (w.id) wordSpkMap.set(w.id, s.spk)
+                    if (!w.id) return
+                    wordSpkMap.set(w.id, s.spk)
+                    wordDeletedMap.set(w.id, w.is_deleted)
                   })
                 })
                 const subs = splitForSubtitles(sentences, val).map((s) => {
+                  // 자막 단위 is_deleted 복원
+                  const words = s.words?.map((w) =>
+                    wordDeletedMap.has(w.id)
+                      ? { ...w, is_deleted: wordDeletedMap.get(w.id) }
+                      : w,
+                  )
                   // 첫 번째 단어의 spk로 문장 화자 결정
-                  const firstWord = s.words?.find((w) => w.id && wordSpkMap.has(w.id))
-                  if (firstWord) {
-                    return { ...s, spk: wordSpkMap.get(firstWord.id) }
-                  }
-                  return s
+                  const firstWord = words?.find((w) => w.id && wordSpkMap.has(w.id))
+                  const spkOverride = firstWord ? wordSpkMap.get(firstWord.id) : s.spk
+                  return { ...s, words, spk: spkOverride }
                 })
                 subsSentencesRef.current = subs
                 startTransition(() => {

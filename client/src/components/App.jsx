@@ -105,6 +105,7 @@ export default function App() {
   const [logs, setLogs] = useState([])
   const [hasSavedState, setHasSavedState] = useState(false)
   const [isRestoring, setIsRestoring] = useState(false)
+  const [bannerDismissed, setBannerDismissed] = useState(false)
   const [activeTab, setActiveTab] = useState("cut")
   const [originalSpkList, setOriginalSpkList] = useState([])
   const [subsMaxWords, setSubsMaxWordsState] = useState(4)
@@ -327,6 +328,11 @@ export default function App() {
       loadAudioTracks()
     }
   }, [sequenceInfo?.id, sentences.length, loadAudioTracks])
+
+  useEffect(() => {
+    // 새로고침 시작 시 배너 dismiss 상태 리셋(필요하면 다시 노출되도록)
+    if (isRefreshing) setBannerDismissed(false)
+  }, [isRefreshing])
 
   const toggleTrackSelection = useCallback(
     (trackIndex) => {
@@ -891,7 +897,10 @@ export default function App() {
       />
       <div className="flex flex-col flex-1 min-h-0">
         {/* 다른 시퀀스의 저장된 상태가 있으면 배너 표시 */}
-        {sentences.length > 0 &&
+        {hasSavedState &&
+          !isUpload &&
+          !bannerDismissed &&
+          sentences.length > 0 &&
           sequenceInfo?.id &&
           sequenceInfo.id !== loadedSequenceIdRef.current &&
           !isRefreshing && (
@@ -901,6 +910,7 @@ export default function App() {
                 isUpload={isUpload}
                 isRestoring={isRestoring}
                 onLoad={handleLoadSavedState}
+                onDismiss={() => setBannerDismissed(true)}
               />
             </div>
           )}

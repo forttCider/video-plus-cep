@@ -28,14 +28,22 @@ function getDefaultDir() {
 
 function subsToText(subsSentences, { includeTime, includeSpeaker, spkNames }) {
   return subsSentences
+    .filter((s) => !s.is_deleted)
     .map((s) => {
+      // s.msg 캐시는 인라인 편집/K 삭제 후 stale일 수 있어 매번 재계산
+      const msg = (s.words || [])
+        .filter((w) => !w.is_deleted && w.text)
+        .map((w) => w.text)
+        .join(" ")
+      // 모든 단어가 K 삭제된 문장은 화자/시간만 남게 되니 줄 전체 건너뜀
+      if (!msg.trim()) return null
       const parts = []
       if (includeSpeaker) parts.push(getSpkName(s.spk, spkNames))
       if (includeTime) parts.push(`[${s.start_time || ""}]`)
-      const msg = s.msg || (s.words || []).map((w) => w.text).join(" ")
       parts.push(msg)
       return parts.join(" ")
     })
+    .filter((line) => line !== null)
     .join("\n")
 }
 
@@ -76,7 +84,8 @@ function sentenceToSRTBlock(idx, sentence) {
   if (words.length === 0) return null
   const start = words[0].start_at
   const end = words[words.length - 1].end_at || start
-  const msg = sentence.msg || words.map((w) => w.text).join(" ")
+  // sentence.msg 캐시는 stale일 수 있어 현재 단어들에서 재계산
+  const msg = words.map((w) => w.text).join(" ")
   return `${idx}\n${msToSRTTime(start)} --> ${msToSRTTime(end)}\n${msg}\n`
 }
 
