@@ -15,6 +15,7 @@ export default function useConnection({
   setSequenceInfo,
   addLog,
   isUploadRef,
+  sentencesRef,
 }) {
   const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState(null)
@@ -84,7 +85,13 @@ export default function useConnection({
         const info = await getActiveSequenceInfo()
         if (info?.id) {
           setSequenceInfo(info)
-          if (info.id !== lastCheckedSeqId && !isUploadRef?.current) {
+          if (
+            info.id !== lastCheckedSeqId &&
+            !isUploadRef?.current &&
+            !(sentencesRef?.current?.length > 0)
+          ) {
+            // 받아쓰기 결과가 있을 때(sentences>0) 자동 시퀀스 이벤트로 hasSavedState를 재설정하면
+            // 같은 시퀀스의 저장 데이터가 감지되어 SavedStateBanner가 다시 떠버림 — 명시적 새로고침 시에만 갱신
             lastCheckedSeqId = info.id
             const exists = await checkSavedState(info.id)
             setHasSavedState(exists)

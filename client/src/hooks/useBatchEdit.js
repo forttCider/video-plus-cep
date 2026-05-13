@@ -22,6 +22,8 @@ export default function useBatchEdit({
   addLog,
   saveState,
   formatBackupName,
+  loadedSequenceIdRef,
+  sequenceInfo,
 }) {
   const handleApplySelected = async () => {
     if (isProcessing || selectedWordIds.size === 0) {
@@ -90,6 +92,10 @@ export default function useBatchEdit({
         sentences: sentencesRef.current,
         selectedWordIds: new Set(),
       })
+      // 컷편집 적용 도중/후 sequenceInfo가 바뀌었더라도 "현재 시퀀스가 로드된 시퀀스"로 간주 — 불필요한 SavedStateBanner 노출 방지
+      if (loadedSequenceIdRef && sequenceInfo?.id) {
+        loadedSequenceIdRef.current = sequenceInfo.id
+      }
     }
   }
 

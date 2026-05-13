@@ -65,7 +65,7 @@ export default function SpeakerNameDialog({
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>화자 이름 지정</DialogTitle>
+          <DialogTitle>화자 관리</DialogTitle>
         </DialogHeader>
 
         <div className="flex flex-col gap-2">

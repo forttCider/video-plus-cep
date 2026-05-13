@@ -195,6 +195,7 @@ export default function App() {
     setSequenceInfo,
     addLog,
     isUploadRef,
+    sentencesRef,
   })
 
   const { handleTranscribeFinish, resetAllState, fetchSummary } = useTranscribe(
@@ -285,8 +286,10 @@ export default function App() {
             if (!orig) return w
             // 드래그/편집으로 바뀐 tick·시간 필드까지 sync (is_deleted만 sync 시
             // subs 탭이 stale tick으로 시킹/재생되는 문제 방지)
+            // 자막 K 삭제는 자막에서만 적용되므로 OR로 보존 (컷편집에서 삭제 || 자막에서 K 삭제)
+            const mergedDeleted = !!orig.is_deleted || !!w.is_deleted
             if (
-              orig.is_deleted !== w.is_deleted ||
+              mergedDeleted !== w.is_deleted ||
               orig.start_at !== w.start_at ||
               orig.end_at !== w.end_at ||
               orig.start_at_tick !== w.start_at_tick ||
@@ -294,7 +297,7 @@ export default function App() {
             ) {
               return {
                 ...w,
-                is_deleted: orig.is_deleted,
+                is_deleted: mergedDeleted,
                 start_at: orig.start_at,
                 end_at: orig.end_at,
                 start_at_tick: orig.start_at_tick,
@@ -548,6 +551,8 @@ export default function App() {
     addLog,
     saveState,
     formatBackupName,
+    loadedSequenceIdRef,
+    sequenceInfo,
   })
 
   const handleStartEditing = useCallback((sentenceIdx, wordIdx) => {
@@ -913,6 +918,7 @@ export default function App() {
         {/* 다른 시퀀스의 저장된 상태가 있으면 배너 표시 */}
         {hasSavedState &&
           !isUpload &&
+          !isProcessing &&
           !bannerDismissed &&
           sentences.length > 0 &&
           sequenceInfo?.id &&
