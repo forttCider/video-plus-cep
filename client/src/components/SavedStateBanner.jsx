@@ -3,8 +3,8 @@ import { History, RefreshCw, X } from "lucide-react"
 import { Button } from "./ui/button"
 import { Card, CardContent } from "./ui/card"
 
-export default function SavedStateBanner({ hasSavedState, isUpload, isRestoring, onLoad, onDismiss }) {
-  if (!hasSavedState || isUpload) return null
+export default function SavedStateBanner({ hasSavedState, isRestoring, onLoad, onDismiss }) {
+  if (!hasSavedState) return null
 
   return (
     <Card className="mb-3 border-blue-500 bg-blue-950/30">

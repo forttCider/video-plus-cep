@@ -14,6 +14,7 @@ export default function useConnection({
   setHasSavedState,
   setSequenceInfo,
   addLog,
+  isUploadRef,
 }) {
   const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState(null)
@@ -35,7 +36,8 @@ export default function useConnection({
         addLog("info", `프로젝트 ID: ${docId}`)
         addLog("info", `시퀀스 ID: ${info.id}`)
         addLog("info", `시퀀스 이름: ${info.name}`)
-        if (info.id) {
+        if (info.id && !isUploadRef?.current) {
+          // 다시 받아쓰기 중에는 hasSavedState 유지 (사용자가 잘못 눌렀을 때 복원 가능하도록)
           checkSavedState(info.id)
             .then((exists) => setHasSavedState(exists))
             .catch(() => {})
@@ -82,7 +84,7 @@ export default function useConnection({
         const info = await getActiveSequenceInfo()
         if (info?.id) {
           setSequenceInfo(info)
-          if (info.id !== lastCheckedSeqId) {
+          if (info.id !== lastCheckedSeqId && !isUploadRef?.current) {
             lastCheckedSeqId = info.id
             const exists = await checkSavedState(info.id)
             setHasSavedState(exists)

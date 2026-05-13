@@ -194,6 +194,7 @@ export default function App() {
     setHasSavedState,
     setSequenceInfo,
     addLog,
+    isUploadRef,
   })
 
   const { handleTranscribeFinish, resetAllState, fetchSummary } = useTranscribe(
@@ -227,6 +228,11 @@ export default function App() {
 
   // "다시 받아쓰기" — 바로 시작하지 않고 홈 화면으로 돌려서 사용자가 트랙/화자 재설정 가능하게
   const handleReturnToHome = useCallback(() => {
+    // 받아쓰기 결과가 있는 상태에서 다시 받아쓰기로 돌아가면 저장된 상태 복원 가능 — SavedStateBanner 노출
+    if (sentencesRef.current.length > 0) {
+      setHasSavedState(true)
+      setBannerDismissed(false)
+    }
     setSentences([])
     sentencesRef.current = []
     setSelectedWordIds(new Set())
@@ -695,7 +701,11 @@ export default function App() {
       // 먼저 화면 초기화
       // 시퀀스 클론으로 시퀀스 ID가 바뀌어도 트랙 선택을 보존하기 위해 즉시 set
       isUploadRef.current = true
-      setHasSavedState(false)
+      // 다시 받아쓰기인 경우(이전 받아쓰기 결과가 있음) → 저장된 상태가 있으니 초기 화면에서 SavedStateBanner 노출
+      if (sentencesRef.current.length > 0) {
+        setHasSavedState(true)
+        setBannerDismissed(false)
+      }
       setSentences([])
       setCurrentWordId(null)
       setSelectedWordIds(new Set())
@@ -735,6 +745,10 @@ export default function App() {
   const handleLoadSavedState = async () => {
     try {
       setIsRestoring(true)
+      // 받아쓰기 진행 중이면 먼저 취소
+      if (isUploadRef.current) {
+        await onClickCancel()
+      }
       setStatus("이전 편집 상태 불러오는 중...")
       const savedState = await loadState()
       if (savedState && savedState.sentences?.length > 0) {
