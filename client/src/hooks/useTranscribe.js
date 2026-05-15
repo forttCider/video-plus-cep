@@ -81,7 +81,7 @@ export default function useTranscribe({
       setStatus("받아쓰기 결과 가져오는 중...")
       try {
         const response = await fetch(
-          `${API_URL}/transcribe/cut/${taskId}?silence_ms=500`,
+          `${API_URL}/transcribe/cut/${taskId}?silence_ms=100`,
         )
         if (!response.ok) {
           setStatus("결과 가져오기 실패: " + response.status)

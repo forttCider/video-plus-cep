@@ -248,10 +248,10 @@ export default function App() {
     timelineIndexRef.current = null
   }, [setFocusedWord])
 
-  const silenceThresholdMs = React.useMemo(
-    () => Math.round((parseFloat(silenceSeconds) || 1) * 1000),
-    [silenceSeconds],
-  )
+  const silenceThresholdMs = React.useMemo(() => {
+    const parsed = parseFloat(silenceSeconds)
+    return Math.round((Number.isFinite(parsed) ? parsed : 1) * 1000)
+  }, [silenceSeconds])
 
   const isSilenceHidden = useCallback(
     (word) =>

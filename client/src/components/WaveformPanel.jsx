@@ -15,6 +15,21 @@ import "./css/WaveformPanel.css"
  *   exponent=0.3: 0.1 → 0.50, 0.5 → 0.81 (강한 압축)
  *   exponent=1.0: 변환 안 함 (단순 정규화)
  */
+// CutEditTab의 spkColors와 동일 — 파형 위 화자별 region 색상에 사용
+const spkColors = ["#4caf50", "#2196f3", "#f44336", "#ff9800", "#9c27b0", "#00bcd4"]
+
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+function colorForSpk(spk, alpha) {
+  const hex = spkColors[spk % spkColors.length] || spkColors[0]
+  return hexToRgba(hex, alpha)
+}
+
 function normalizePeaksP90(peaks, exponent = 0.5) {
   if (!peaks || peaks.length === 0) return peaks
   let absMax = 0
@@ -93,6 +108,7 @@ export default function WaveformPanel({
             id: word.id || word.start_at,
             startSec: word.start_at / 1000,
             endSec: word.end_at / 1000,
+            spk: sentence.spk || 0,
           })
         }
       })
@@ -109,20 +125,27 @@ export default function WaveformPanel({
     return map
   }, [allWords])
 
-  // 🔥 각 단어의 드래그 경계 계산 (이전 단어 끝 ~ 다음 단어 시작)
+  // 🔥 각 단어의 드래그 경계 계산 — 같은 화자(spk) 내에서 이전/다음 단어 기준
   useEffect(() => {
     wordBoundsRef.current.clear()
 
-    // 시간순 정렬
-    const sorted = [...allWords].sort((a, b) => a.startSec - b.startSec)
+    // 화자(spk)별로 그룹핑 후 각 그룹 내에서 시간순 prev/next 결정
+    const bySpk = new Map()
+    allWords.forEach((w) => {
+      const arr = bySpk.get(w.spk) || []
+      arr.push(w)
+      bySpk.set(w.spk, arr)
+    })
 
-    sorted.forEach((word, idx) => {
-      const prevWord = sorted[idx - 1]
-      const nextWord = sorted[idx + 1]
-
-      wordBoundsRef.current.set(String(word.id), {
-        minStart: prevWord ? prevWord.endSec : 0,
-        maxEnd: nextWord ? nextWord.startSec : duration || 9999,
+    bySpk.forEach((words) => {
+      const sorted = [...words].sort((a, b) => a.startSec - b.startSec)
+      sorted.forEach((word, idx) => {
+        const prevWord = sorted[idx - 1]
+        const nextWord = sorted[idx + 1]
+        wordBoundsRef.current.set(String(word.id), {
+          minStart: prevWord ? prevWord.endSec : 0,
+          maxEnd: nextWord ? nextWord.startSec : duration || 9999,
+        })
       })
     })
   }, [allWords, duration])
@@ -140,7 +163,7 @@ export default function WaveformPanel({
       height: 100,
       barHeight: 1,
       normalize: false,
-      minPxPerSec: 200,
+      minPxPerSec: 400,
       scrollParent: true,
       backend: "MediaElement",
       pixelRatio: 1,
@@ -279,7 +302,7 @@ export default function WaveformPanel({
       ws.backend.getDuration = () => peaksDuration
       setDuration(peaksDuration)
       ws.drawBuffer()
-      ws.zoom(200)
+      ws.zoom(400)
       setTimeout(() => {
         setIsReady(true)
         setIsRegionsLoading(true)
@@ -322,7 +345,7 @@ export default function WaveformPanel({
           ? cleanPath.replace(/^file:\/\//, "")
           : cleanPath
         if (localPath.startsWith("/")) {
-          const result = computePeaksForFile(localPath, 200)
+          const result = computePeaksForFile(localPath, 400)
           preparedPeaks = normalizePeaksP90(result.peaks)
           preparedDuration = result.duration
         }
@@ -357,9 +380,10 @@ export default function WaveformPanel({
 
         const isCurrent = time >= word.start && time < word.end
         if (region.element) {
+          const spk = region.data?.spk ?? 0
           region.element.style.backgroundColor = isCurrent
-            ? "rgba(255, 230, 0, 0.25)"
-            : "rgba(100, 100, 100, 0.1)"
+            ? "rgba(255, 230, 0, 0.35)"
+            : colorForSpk(spk, 0.25)
         }
       })
     },
@@ -409,8 +433,8 @@ export default function WaveformPanel({
 
       const color =
         isCurrent || isFocused
-          ? "rgba(255, 230, 0, 0.25)"
-          : "rgba(100, 100, 100, 0.1)"
+          ? "rgba(255, 230, 0, 0.35)"
+          : colorForSpk(word.spk, 0.25)
 
       if (!activeRegionsRef.current.has(id)) {
         const region = ws.addRegion({
@@ -420,7 +444,7 @@ export default function WaveformPanel({
           color,
           drag: false,
           resize: true,
-          data: { text: word.text },
+          data: { text: word.text, spk: word.spk },
         })
 
         if (region.element) {
@@ -590,14 +614,15 @@ export default function WaveformPanel({
       isInternalSeekRef.current = false
     }, 50)
 
-    // 🔥 직접 region 색상 업데이트
+    // 🔥 직접 region 색상 업데이트 (focused는 노랑, 나머지는 화자별 색상)
     const focusedId = String(word.id || word.start_at)
     activeRegionsRef.current.forEach((region, id) => {
       if (region?.element) {
         const isFocused = id === focusedId
+        const spk = region.data?.spk ?? 0
         region.element.style.backgroundColor = isFocused
-          ? "rgba(255, 230, 0, 0.25)"
-          : "rgba(100, 100, 100, 0.1)"
+          ? "rgba(255, 230, 0, 0.35)"
+          : colorForSpk(spk, 0.25)
       }
     })
 

@@ -105,7 +105,7 @@ export default function CutEditTab({
             <Input
               type="number"
               step="0.05"
-              min="0.5"
+              min="0.1"
               max="5"
               value={silenceSeconds}
               onChange={(e) => onSilenceChange(e.target.value)}
@@ -116,7 +116,7 @@ export default function CutEditTab({
           <Slider
             value={[isNaN(parseFloat(silenceSeconds)) ? 1 : parseFloat(silenceSeconds)]}
             onValueChange={([v]) => onSilenceChange(String(v))}
-            min={0.5}
+            min={0.1}
             max={5}
             step={0.05}
             disabled={isUpload}
