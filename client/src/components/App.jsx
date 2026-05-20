@@ -304,6 +304,8 @@ export default function App() {
                 end_at_tick: orig.end_at_tick,
                 start_at_sec: orig.start_at_sec,
                 end_at_sec: orig.end_at_sec,
+                original_start_at: orig.original_start_at,
+                original_end_at: orig.original_end_at,
               }
             }
             return w
@@ -421,6 +423,37 @@ export default function App() {
             }
           }
           return word
+        }),
+      })),
+    )
+  }
+
+  // 드래그된 단어 region을 원본 STT 위치로 되돌림 (↺ 버튼)
+  const handleResetWordTime = (wordId) => {
+    setSentences((prev) =>
+      prev.map((sentence) => ({
+        ...sentence,
+        words: sentence.words?.map((word) => {
+          const wId = String(word.id || word.start_at)
+          if (wId !== String(wordId)) return word
+          if (word.original_start_at == null || word.original_end_at == null) {
+            return word
+          }
+          return {
+            ...word,
+            start_at: word.original_start_at,
+            end_at: word.original_end_at,
+            start_at_sec: word.original_start_at / 1000,
+            end_at_sec: word.original_end_at / 1000,
+            start_at_tick: secondsToTicksAligned(
+              word.original_start_at / 1000,
+              timebaseRef.current,
+            ),
+            end_at_tick: secondsToTicksAligned(
+              word.original_end_at / 1000,
+              timebaseRef.current,
+            ),
+          }
         }),
       })),
     )
@@ -1042,6 +1075,7 @@ export default function App() {
             currentTime={currentTime}
             isPlayingState={isPlayingState}
             onWordTimeChange={handleWordTimeChange}
+            onResetWordTime={handleResetWordTime}
             onWaveformSeek={handleWaveformSeek}
             spkNames={spkNames}
           />

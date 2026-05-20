@@ -63,6 +63,7 @@ export default function CutEditTab({
   currentTime,
   isPlayingState,
   onWordTimeChange,
+  onResetWordTime,
   onWaveformSeek,
   spkNames = {},
 }) {
@@ -294,6 +295,7 @@ export default function CutEditTab({
           currentTime={getOriginalTimeFromTimeline(currentTime)}
           focusedWord={focusedWord}
           onWordTimeChange={onWordTimeChange}
+          onResetWordTime={onResetWordTime}
           onSeek={onWaveformSeek}
           isPlaying={isPlayingState}
           isUpload={isUpload}

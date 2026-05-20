@@ -58,6 +58,7 @@ export default function WaveformPanel({
   currentTime,
   focusedWord,
   onWordTimeChange,
+  onResetWordTime,
   onSeek,
   isPlaying,
   isUpload,
@@ -68,6 +69,7 @@ export default function WaveformPanel({
   const activeRegionsRef = useRef(new Map())
   const wordBoundsRef = useRef(new Map()) // 🔥 각 단어의 드래그 경계
   const onWordTimeChangeRef = useRef(onWordTimeChange)
+  const onResetWordTimeRef = useRef(onResetWordTime)
   const onSeekRef = useRef(onSeek)
   const isDraggingRef = useRef(false)
   const justDraggedRef = useRef(false)
@@ -79,6 +81,8 @@ export default function WaveformPanel({
   const zMaxRef = useRef(1)
   const fadedRef = useRef(new Set()) // 반투명 상태인 wordId
   const FADED_OPACITY = "0.3"
+  // ↺ 리셋 등 프로그램적 region.update가 사용자 드래그로 오해되지 않도록
+  const isProgrammaticRegionUpdateRef = useRef(false)
   const lastRegionUpdateRef = useRef(0)
   const rafRef = useRef(null)
   const scrollToCursorRef = useRef(null)
@@ -91,8 +95,9 @@ export default function WaveformPanel({
 
   useEffect(() => {
     onWordTimeChangeRef.current = onWordTimeChange
+    onResetWordTimeRef.current = onResetWordTime
     onSeekRef.current = onSeek
-  }, [onWordTimeChange, onSeek])
+  }, [onWordTimeChange, onResetWordTime, onSeek])
 
   const allWords = useMemo(() => {
     const words = []
@@ -108,6 +113,11 @@ export default function WaveformPanel({
           word.start_at !== undefined &&
           word.end_at !== undefined
         ) {
+          const isDragged =
+            (word.original_start_at != null &&
+              word.start_at !== word.original_start_at) ||
+            (word.original_end_at != null &&
+              word.end_at !== word.original_end_at)
           words.push({
             ...word,
             sentenceIdx: sIdx,
@@ -116,6 +126,7 @@ export default function WaveformPanel({
             startSec: word.start_at / 1000,
             endSec: word.end_at / 1000,
             spk: sentence.spk || 0,
+            isDragged,
           })
         }
       })
@@ -230,6 +241,8 @@ export default function WaveformPanel({
     })
 
     ws.on("region-update-end", (region) => {
+      // ↺ 리셋 등 프로그램 update는 사용자 드래그 종료가 아님 — onWordTimeChange 호출 금지
+      if (isProgrammaticRegionUpdateRef.current) return
       isDraggingRef.current = false
       justDraggedRef.current = true
 
@@ -248,6 +261,8 @@ export default function WaveformPanel({
 
     // 🔥 드래그 중 범위 제한
     ws.on("region-updated", (region) => {
+      // ↺ 리셋 등 프로그램 호출로 인한 update는 사용자 드래그 아님
+      if (isProgrammaticRegionUpdateRef.current) return
       isDraggingRef.current = true
 
       const bounds = wordBoundsRef.current.get(region.id)
@@ -368,7 +383,7 @@ export default function WaveformPanel({
       if (!cleanPath.startsWith("blob:") && !cleanPath.startsWith("file://")) {
         url = `file://${cleanPath}`
       }
-      // 로컬 파일이면 직접 peaks 계산 후 정규화+압축 적용
+      // 로컬 파일이면 직접 peaks 계산 후 P90 정규화 적용
       let preparedPeaks = null
       let preparedDuration = null
       try {
@@ -538,14 +553,14 @@ export default function WaveformPanel({
             "position:absolute;top:2px;left:4px;font-size:11px;color:#fff;white-space:nowrap;pointer-events:none;text-shadow:0 0 2px #000;"
           region.element.appendChild(label)
 
-          // 뒤로 보내기/앞으로 가져오기 토글 버튼 (우측 상단)
+          // 뒤로 보내기/앞으로 가져오기 토글 버튼 (우측 상단, ↺와 겹치지 않게 좌측으로 이동)
           const backBtn = document.createElement("button")
           backBtn.type = "button"
           const isFaded = fadedRef.current.has(id)
           backBtn.textContent = isFaded ? "△" : "▽"
           backBtn.title = isFaded ? "앞으로 가져오기" : "뒤로 보내기"
           backBtn.style.cssText =
-            "position:absolute;top:2px;right:2px;z-index:10;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:2px;font-size:10px;line-height:1;padding:2px 5px;cursor:pointer;pointer-events:auto;"
+            "position:absolute;top:2px;right:24px;z-index:10;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:2px;font-size:10px;line-height:1;padding:2px 5px;cursor:pointer;pointer-events:auto;"
           if (!isMultiSpeakerRef.current) backBtn.style.display = "none"
           backBtn.addEventListener("mousedown", (e) => {
             e.stopPropagation()
@@ -557,6 +572,21 @@ export default function WaveformPanel({
           })
           region.element.appendChild(backBtn)
           region._backBtn = backBtn
+
+          // 드래그된 region에 ↺ 리셋 버튼 + 시각 큐 (노란 테두리)
+          if (word.isDragged) {
+            region.element.classList.add("region-dragged")
+            const resetBtn = document.createElement("button")
+            resetBtn.className = "region-reset-btn"
+            resetBtn.textContent = "↺"
+            resetBtn.title = "원본 시간으로 되돌리기"
+            resetBtn.addEventListener("mousedown", (e) => e.stopPropagation())
+            resetBtn.addEventListener("click", (e) => {
+              e.stopPropagation()
+              onResetWordTimeRef.current?.(word.id)
+            })
+            region.element.appendChild(resetBtn)
+          }
 
           // 저장된 z-order 복원
           const savedZ = zOrderRef.current.get(id)
@@ -572,10 +602,42 @@ export default function WaveformPanel({
 
         activeRegionsRef.current.set(id, region)
       } else {
-        // 🔥 기존 region 색상 업데이트
+        // 🔥 기존 region — 색상/위치/드래그 마커 갱신
         const region = activeRegionsRef.current.get(id)
         if (region?.element) {
           region.element.style.backgroundColor = color
+
+          // 위치(start/end) 변화 감지 — ↺ 리셋이나 외부 sync로 word 시간이 바뀐 경우
+          const startChanged =
+            Math.abs((region.start ?? 0) - word.startSec) > 0.0005
+          const endChanged =
+            Math.abs((region.end ?? 0) - word.endSec) > 0.0005
+          if (startChanged || endChanged) {
+            try {
+              isProgrammaticRegionUpdateRef.current = true
+              region.update({ start: word.startSec, end: word.endSec })
+            } catch (e) {}
+            isProgrammaticRegionUpdateRef.current = false
+          }
+
+          // 드래그 상태 변경 반영 (toggle class + ↺ 버튼)
+          const hasResetBtn = region.element.querySelector(".region-reset-btn")
+          if (word.isDragged && !hasResetBtn) {
+            region.element.classList.add("region-dragged")
+            const resetBtn = document.createElement("button")
+            resetBtn.className = "region-reset-btn"
+            resetBtn.textContent = "↺"
+            resetBtn.title = "원본 시간으로 되돌리기"
+            resetBtn.addEventListener("mousedown", (e) => e.stopPropagation())
+            resetBtn.addEventListener("click", (e) => {
+              e.stopPropagation()
+              onResetWordTimeRef.current?.(word.id)
+            })
+            region.element.appendChild(resetBtn)
+          } else if (!word.isDragged && hasResetBtn) {
+            region.element.classList.remove("region-dragged")
+            hasResetBtn.remove()
+          }
         }
       }
     })
