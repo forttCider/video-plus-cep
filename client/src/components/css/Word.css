@@ -66,14 +66,36 @@
   text-decoration: line-through;
 }
 
-/* 검색 결과 하이라이트 */
-.word-search-match {
-  background-color: rgba(255, 230, 0, 0.3);
+/* 검색 결과 하이라이트 - 매치된 글자에만 적용 */
+.word-search-match-char {
+  background-color: rgba(255, 230, 0, 0.55);
+  color: #000;
+  border-radius: 2px;
 }
 
-.word-search-current {
-  background-color: rgba(255, 165, 0, 0.6);
-  outline: 2px solid orange;
+.word-search-current-char {
+  background-color: #fde047;
+  color: #000;
+  outline: 1.5px solid #a16207;
+  border-radius: 2px;
+}
+
+/* 치환 미리보기 — 원본 (취소선 빨강) */
+.word-search-replace-old {
+  background-color: rgba(220, 38, 38, 0.22);
+  color: inherit;
+  text-decoration: line-through;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* 치환 미리보기 — 새 텍스트 (녹색) */
+.word-search-replace-new {
+  background-color: rgba(34, 197, 94, 0.28);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 2px;
+  margin-left: 1px;
 }
 
 .word-editing {

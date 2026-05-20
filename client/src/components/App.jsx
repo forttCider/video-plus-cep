@@ -50,6 +50,7 @@ import {
   getTimelineTimeFromOriginal,
 } from "../js/calculateTimeOffset"
 import useSubtitleKeyboard from "../hooks/useSubtitleKeyboard"
+import useSearchAndReplace from "../hooks/useSearchAndReplace"
 import { setPlayerPosition } from "../js/cep-bridge"
 
 function formatBackupName() {
@@ -76,8 +77,6 @@ export default function App() {
   const [summaryTaskId, setSummaryTaskId] = useState(null)
   const [sentences, setSentences] = useState([])
   const [currentWordId, setCurrentWordId] = useState(null)
-  const [searchResultsSet] = useState(new Set())
-  const [currentSearchWordId] = useState(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [batchProgress, setBatchProgress] = useState(null)
   const [showHistory, setShowHistory] = useState(false)
@@ -651,6 +650,71 @@ export default function App() {
     sentencesRef,
   })
 
+  const cutSearch = useSearchAndReplace({
+    sentences,
+    setSentences,
+    sentencesRef,
+    wordRefs,
+    pushUndo: null,
+    isActiveTab: activeTab === "cut",
+    onAfterChange: useCallback(
+      (next) => saveState({ sentences: next }),
+      [saveState],
+    ),
+  })
+
+  const subsSearch = useSearchAndReplace({
+    sentences: subsSentences,
+    setSentences: setSubsSentences,
+    sentencesRef: subsSentencesRef,
+    wordRefs: subsWordRefs,
+    pushUndo: subsPushUndo,
+    isActiveTab: activeTab === "subs",
+    onAfterChange: useCallback(
+      (next) => {
+        const spkList = [...new Set(next.map((s) => s.spk || 0))].sort()
+        saveSubtitleData(next, subsMaxWordsRef.current, {
+          count: spkList.length,
+          list: spkList,
+        })
+      },
+      [saveSubtitleData],
+    ),
+  })
+
+  // Cmd/Ctrl+F → 활성 탭의 검색 사이드바 토글 (열려있으면 닫기, 닫혀있으면 열기+포커스)
+  const cutFocusInput = cutSearch.focusInput
+  const subsFocusInput = subsSearch.focusInput
+  const cutClose = cutSearch.close
+  const subsClose = subsSearch.close
+  const cutIsOpen = cutSearch.isOpen
+  const subsIsOpen = subsSearch.isOpen
+  useEffect(() => {
+    const handler = (e) => {
+      // 한국어 IME 활성 시 e.key가 "f"가 아닌 한글 자모가 되므로 e.code/e.keyCode로도 확인
+      const isFKey =
+        e.key === "f" ||
+        e.key === "F" ||
+        e.code === "KeyF" ||
+        e.keyCode === 70
+      if ((e.metaKey || e.ctrlKey) && isFKey) {
+        if (sentencesRef.current.length === 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        const isOpen = activeTab === "subs" ? subsIsOpen : cutIsOpen
+        if (isOpen) {
+          if (activeTab === "subs") subsClose()
+          else cutClose()
+        } else {
+          if (activeTab === "subs") subsFocusInput()
+          else cutFocusInput()
+        }
+      }
+    }
+    window.addEventListener("keydown", handler, true)
+    return () => window.removeEventListener("keydown", handler, true)
+  }, [activeTab, cutFocusInput, subsFocusInput, cutClose, subsClose, cutIsOpen, subsIsOpen])
+
   const { handleOpenHistory, handleBackupClick, handleRestoreConfirm } =
     useBackupRestore({
       sentencesRef,
@@ -996,8 +1060,9 @@ export default function App() {
             currentWordId={currentWordId}
             currentWordSentenceIdx={currentWordSentenceIdx}
             selectedWordIds={selectedWordIds}
-            searchResultsSet={searchResultsSet}
-            currentSearchWordId={currentSearchWordId}
+            searchResultsSet={cutSearch.searchResultsSet}
+            currentSearchWordId={cutSearch.currentSearchWordId}
+            search={cutSearch}
             silenceThresholdMs={silenceThresholdMs}
             wordRefs={wordRefs}
             onWordClick={handleWordClick}
@@ -1034,8 +1099,9 @@ export default function App() {
             currentWordId={currentWordId}
             currentWordSentenceIdx={currentWordSentenceIdx}
             selectedWordIds={selectedWordIds}
-            searchResultsSet={searchResultsSet}
-            currentSearchWordId={currentSearchWordId}
+            searchResultsSet={subsSearch.searchResultsSet}
+            currentSearchWordId={subsSearch.currentSearchWordId}
+            search={subsSearch}
             silenceThresholdMs={silenceThresholdMs}
             wordRefs={subsWordRefs}
             onWordClick={handleWordClick}

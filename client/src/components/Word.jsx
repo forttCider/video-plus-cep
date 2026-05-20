@@ -6,6 +6,7 @@ import {
   TooltipProvider,
 } from "./ui/tooltip"
 import { refreshKeyEventsRegistration } from "../js/cep-bridge"
+import { getHighlightSegments } from "../hooks/useSearchAndReplace"
 import "./css/Word.css"
 
 const Word = React.memo(
@@ -19,6 +20,9 @@ const Word = React.memo(
         isSearchMatch,
         isCurrentSearchMatch,
         isEditing,
+        searchQuery,
+        searchCaseSensitive,
+        searchWholeWord,
         onClick,
         onTextUpdate,
         onEditingEnd,
@@ -105,14 +109,37 @@ const Word = React.memo(
         isSelected ? "word-selected" : "",
         mode === "cut" && (word.is_edit || word.edit_points?.reason) ? "word-edit" : "",
         word.is_deleted ? (mode === "subs" ? "word-deleted-subs" : "word-deleted") : "",
-        isSearchMatch ? "word-search-match" : "",
-        isCurrentSearchMatch ? "word-search-current" : "",
         isEditing ? "word-editing" : "",
       ]
         .filter(Boolean)
         .join(" ")
 
       const reason = mode === "cut" ? word.edit_points?.reason : null
+
+      const renderedText =
+        isSearchMatch && !isEditing && searchQuery
+          ? getHighlightSegments(
+              word.text || "",
+              searchQuery,
+              !!searchCaseSensitive,
+              !!searchWholeWord,
+            ).map((s, i) =>
+              s.match ? (
+                <span
+                  key={i}
+                  className={
+                    isCurrentSearchMatch
+                      ? "word-search-current-char"
+                      : "word-search-match-char"
+                  }
+                >
+                  {s.text}
+                </span>
+              ) : (
+                <span key={i}>{s.text}</span>
+              ),
+            )
+          : word.text
 
       const wordContent = (
         <div ref={ref} className={classNames} onClick={onClick}>
@@ -146,7 +173,7 @@ const Word = React.memo(
           ) : word.is_edit ? (
             <div>[...]</div>
           ) : (
-            <div>{word.text}</div>
+            <div>{renderedText}</div>
           )}
         </div>
       )
@@ -181,7 +208,11 @@ const Word = React.memo(
       prevProps.word.is_edit === nextProps.word.is_edit &&
       prevProps.word.text === nextProps.word.text &&
       prevProps.word.start_at === nextProps.word.start_at &&
-      prevProps.word.end_at === nextProps.word.end_at
+      prevProps.word.end_at === nextProps.word.end_at &&
+      (prevProps.isSearchMatch === false ||
+        (prevProps.searchQuery === nextProps.searchQuery &&
+          prevProps.searchCaseSensitive === nextProps.searchCaseSensitive &&
+          prevProps.searchWholeWord === nextProps.searchWholeWord))
     )
   },
 )

@@ -10,6 +10,9 @@ export default function SentenceList({
   selectedWordIds,
   searchResultsSet,
   currentSearchWordId,
+  searchQuery,
+  searchCaseSensitive,
+  searchWholeWord,
   silenceThresholdMs,
   wordRefs,
   onWordClick,
@@ -55,6 +58,9 @@ export default function SentenceList({
               }
               searchResultsSet={searchResultsSet}
               currentSearchWordId={currentSearchWordId}
+              searchQuery={searchQuery}
+              searchCaseSensitive={searchCaseSensitive}
+              searchWholeWord={searchWholeWord}
               wordRefs={wordRefs}
               silenceThresholdMs={silenceThresholdMs}
               mode={mode}

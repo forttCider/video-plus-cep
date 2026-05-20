@@ -1,11 +1,12 @@
 import { useState, useCallback } from "react"
-import { VolumeX, MessageCircle, Mic, Scissors, Copy, Check } from "lucide-react"
+import { VolumeX, MessageCircle, Mic, Scissors, Copy, Check, Search } from "lucide-react"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Slider } from "./ui/slider"
 import SentenceList from "./SentenceList"
 import SummaryPanel from "./SummaryPanel"
 import WaveformPanel from "./WaveformPanel"
+import SearchReplaceSidebar from "./SearchReplaceSidebar"
 import { getOriginalTimeFromTimeline } from "../js/calculateTimeOffset"
 
 const spkLabels = ["A", "B", "C", "D", "E", "F"]
@@ -65,6 +66,7 @@ export default function CutEditTab({
   onWordTimeChange,
   onWaveformSeek,
   spkNames = {},
+  search,
 }) {
   const [checkedSentences, setCheckedSentences] = useState(new Set())
   const [summaryCopied, setSummaryCopied] = useState(false)
@@ -238,16 +240,29 @@ export default function CutEditTab({
               </>
             )}
           </div>
-          <Button
-            size="sm"
-            className="h-7"
-            variant={selectedWordIds.size > 0 ? "default" : "secondary"}
-            disabled={selectedWordIds.size === 0 || !isConnected || isUpload || isProcessing}
-            onClick={onApply}
-          >
-            <Scissors className="h-3.5 w-3.5 mr-1" />
-            시퀀스 적용 {selectedWordIds.size > 0 && `(${selectedWordIds.size})`}
-          </Button>
+          <div className="flex items-center gap-1.5">
+            {search && (
+              <Button
+                size="sm"
+                variant={search.isOpen ? "default" : "ghost"}
+                className="h-7 text-xs px-2"
+                onClick={search.toggle}
+                title="찾기 / 바꾸기"
+              >
+                <Search className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            <Button
+              size="sm"
+              className="h-7"
+              variant={selectedWordIds.size > 0 ? "default" : "secondary"}
+              disabled={selectedWordIds.size === 0 || !isConnected || isUpload || isProcessing}
+              onClick={onApply}
+            >
+              <Scissors className="h-3.5 w-3.5 mr-1" />
+              시퀀스 적용 {selectedWordIds.size > 0 && `(${selectedWordIds.size})`}
+            </Button>
+          </div>
         </div>
 
         {/* 문장 리스트 */}
@@ -260,6 +275,9 @@ export default function CutEditTab({
           selectedWordIds={selectedWordIds}
           searchResultsSet={searchResultsSet}
           currentSearchWordId={currentSearchWordId}
+          searchQuery={search?.debouncedQuery || ""}
+          searchCaseSensitive={search?.caseSensitive || false}
+          searchWholeWord={search?.wholeWord || false}
           silenceThresholdMs={silenceThresholdMs}
           wordRefs={wordRefs}
           onWordClick={onWordClick}
@@ -300,6 +318,9 @@ export default function CutEditTab({
           silenceThresholdMs={silenceThresholdMs}
         />
       </div>
+
+      {/* 검색 사이드바 */}
+      {search && <SearchReplaceSidebar search={search} mode="cut" spkNames={spkNames} />}
     </div>
   )
 }

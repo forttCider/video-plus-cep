@@ -22,6 +22,9 @@ const Sentence = forwardRef(
       onSentencePlay,
       searchResultsSet = new Set(),
       currentSearchWordId = null,
+      searchQuery = "",
+      searchCaseSensitive = false,
+      searchWholeWord = false,
       wordRefs = { current: {} },
       silenceThresholdMs = 1000,
       mode = "cut",
@@ -182,6 +185,9 @@ const Sentence = forwardRef(
                   isSelected={isSelected}
                   isSearchMatch={isSearchMatch}
                   isCurrentSearchMatch={isCurrentSearchMatch}
+                  searchQuery={searchQuery}
+                  searchCaseSensitive={searchCaseSensitive}
+                  searchWholeWord={searchWholeWord}
                   isEditing={isEditingThis}
                   onClick={(e) => {
                     onWordClick(word, sentenceIdx, wordIdx);
@@ -234,6 +240,22 @@ export default React.memo(Sentence, (prevProps, nextProps) => {
   const spkNameChanged =
     (prevProps.spkNames?.[spk] || "") !== (nextProps.spkNames?.[spk] || "");
 
+  // 검색 결과 변경: 이 문장에 영향이 있을 때만 리렌더
+  const searchSetChanged =
+    prevProps.searchResultsSet !== nextProps.searchResultsSet &&
+    nextProps.sentence?.words?.some(
+      (w) =>
+        (prevProps.searchResultsSet?.has(w.id) || false) !==
+        (nextProps.searchResultsSet?.has(w.id) || false),
+    );
+  const currentSearchChanged =
+    prevProps.currentSearchWordId !== nextProps.currentSearchWordId &&
+    nextProps.sentence?.words?.some(
+      (w) =>
+        w.id === prevProps.currentSearchWordId ||
+        w.id === nextProps.currentSearchWordId,
+    );
+
   return (
     prevProps.sentence === nextProps.sentence &&
     prevProps.sentenceIdx === nextProps.sentenceIdx &&
@@ -244,6 +266,11 @@ export default React.memo(Sentence, (prevProps, nextProps) => {
     prevProps.mode === nextProps.mode &&
     prevProps.isChecked === nextProps.isChecked &&
     prevProps.silenceThresholdMs === nextProps.silenceThresholdMs &&
-    !spkNameChanged
+    !spkNameChanged &&
+    !searchSetChanged &&
+    !currentSearchChanged &&
+    prevProps.searchQuery === nextProps.searchQuery &&
+    prevProps.searchCaseSensitive === nextProps.searchCaseSensitive &&
+    prevProps.searchWholeWord === nextProps.searchWholeWord
   );
 });

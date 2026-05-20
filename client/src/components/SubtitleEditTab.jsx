@@ -1,7 +1,8 @@
 import { startTransition, useState, useCallback } from "react"
-import { Copy, Check } from "lucide-react"
+import { Copy, Check, Search } from "lucide-react"
 import { Button } from "./ui/button"
 import SentenceList from "./SentenceList"
+import SearchReplaceSidebar from "./SearchReplaceSidebar"
 import { splitForSubtitles } from "../js/subtitleSplitter"
 
 const spkLabels = ["A", "B", "C", "D", "E", "F"]
@@ -50,6 +51,7 @@ export default function SubtitleEditTab({
   isConnected,
   pushUndo,
   spkNames = {},
+  search,
 }) {
   const [checkedSentences, setCheckedSentences] = useState(new Set())
   const [subsCopied, setSubsCopied] = useState(false)
@@ -91,6 +93,7 @@ export default function SubtitleEditTab({
   }, [checkedSentences.size, subsSentences.length])
 
   return (
+    <div className="flex flex-1 min-h-0">
     <div className="flex flex-col flex-1 min-h-0">
       <div className="px-4 py-2 border-b border-border">
         <div className="flex items-center justify-between">
@@ -198,6 +201,17 @@ export default function SubtitleEditTab({
                 </>
               )}
             </button>
+            {search && (
+              <Button
+                size="sm"
+                variant={search.isOpen ? "default" : "ghost"}
+                className="h-7 px-2 mr-1 shrink-0"
+                onClick={search.toggle}
+                title="찾기 / 바꾸기"
+              >
+                <Search className="h-3.5 w-3.5" />
+              </Button>
+            )}
             <Button
               size="sm"
               className="h-7 shrink-0"
@@ -221,6 +235,9 @@ export default function SubtitleEditTab({
         selectedWordIds={selectedWordIds}
         searchResultsSet={searchResultsSet}
         currentSearchWordId={currentSearchWordId}
+        searchQuery={search?.debouncedQuery || ""}
+        searchCaseSensitive={search?.caseSensitive || false}
+        searchWholeWord={search?.wholeWord || false}
         silenceThresholdMs={silenceThresholdMs}
         wordRefs={wordRefs}
         onWordClick={onWordClick}
@@ -247,6 +264,8 @@ export default function SubtitleEditTab({
         spkNames={spkNames}
       />
       </div>
+    </div>
+    {search && <SearchReplaceSidebar search={search} mode="subs" spkNames={spkNames} />}
     </div>
   )
 }
