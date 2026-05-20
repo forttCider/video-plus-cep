@@ -553,14 +553,13 @@ export default function WaveformPanel({
             "position:absolute;top:2px;left:4px;font-size:11px;color:#fff;white-space:nowrap;pointer-events:none;text-shadow:0 0 2px #000;"
           region.element.appendChild(label)
 
-          // 뒤로 보내기/앞으로 가져오기 토글 버튼 (우측 상단, ↺와 겹치지 않게 좌측으로 이동)
+          // 뒤로 보내기/앞으로 가져오기 토글 버튼 (우상단)
           const backBtn = document.createElement("button")
           backBtn.type = "button"
+          backBtn.className = "region-ctrl-btn region-back-btn"
           const isFaded = fadedRef.current.has(id)
           backBtn.textContent = isFaded ? "△" : "▽"
           backBtn.title = isFaded ? "앞으로 가져오기" : "뒤로 보내기"
-          backBtn.style.cssText =
-            "position:absolute;top:2px;right:24px;z-index:10;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:2px;font-size:10px;line-height:1;padding:2px 5px;cursor:pointer;pointer-events:auto;"
           if (!isMultiSpeakerRef.current) backBtn.style.display = "none"
           backBtn.addEventListener("mousedown", (e) => {
             e.stopPropagation()
@@ -577,7 +576,7 @@ export default function WaveformPanel({
           if (word.isDragged) {
             region.element.classList.add("region-dragged")
             const resetBtn = document.createElement("button")
-            resetBtn.className = "region-reset-btn"
+            resetBtn.className = "region-ctrl-btn region-reset-btn"
             resetBtn.textContent = "↺"
             resetBtn.title = "원본 시간으로 되돌리기"
             resetBtn.addEventListener("mousedown", (e) => e.stopPropagation())
@@ -625,7 +624,7 @@ export default function WaveformPanel({
           if (word.isDragged && !hasResetBtn) {
             region.element.classList.add("region-dragged")
             const resetBtn = document.createElement("button")
-            resetBtn.className = "region-reset-btn"
+            resetBtn.className = "region-ctrl-btn region-reset-btn"
             resetBtn.textContent = "↺"
             resetBtn.title = "원본 시간으로 되돌리기"
             resetBtn.addEventListener("mousedown", (e) => e.stopPropagation())
