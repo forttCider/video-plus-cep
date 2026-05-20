@@ -72,6 +72,13 @@ export default function WaveformPanel({
   const isDraggingRef = useRef(false)
   const justDraggedRef = useRef(false)
   const isInternalSeekRef = useRef(false)
+  // region-click 직후 발생하는 seek 이벤트가 시간 기반 lookup으로 덮어쓰는 것 방지
+  const lastRegionClickAtRef = useRef(0)
+  // 겹친 region 관리: z-order (앞으로 보내기) + opacity (뒤로 = 반투명)
+  const zOrderRef = useRef(new Map())
+  const zMaxRef = useRef(1)
+  const fadedRef = useRef(new Set()) // 반투명 상태인 wordId
+  const FADED_OPACITY = "0.3"
   const lastRegionUpdateRef = useRef(0)
   const rafRef = useRef(null)
   const scrollToCursorRef = useRef(null)
@@ -115,6 +122,26 @@ export default function WaveformPanel({
     })
     return words
   }, [sentences, silenceThresholdMs])
+
+  // 화자가 2명 이상일 때만 region에 앞/뒤 토글 버튼 노출 (단일 화자는 겹침 불가)
+  const isMultiSpeaker = useMemo(() => {
+    const set = new Set()
+    for (const w of allWords) {
+      set.add(w.spk)
+      if (set.size > 1) return true
+    }
+    return false
+  }, [allWords])
+  const isMultiSpeakerRef = useRef(isMultiSpeaker)
+  useEffect(() => {
+    isMultiSpeakerRef.current = isMultiSpeaker
+    // 기존 region들의 버튼 표시 상태도 함께 동기화
+    activeRegionsRef.current.forEach((region) => {
+      if (region?._backBtn) {
+        region._backBtn.style.display = isMultiSpeaker ? "" : "none"
+      }
+    })
+  }, [isMultiSpeaker])
 
   // 🔥 현재 단어만 빠르게 찾기 위한 인덱스 (Map으로 O(1) 조회)
   const wordTimeIndex = useMemo(() => {
@@ -258,16 +285,20 @@ export default function WaveformPanel({
 
     ws.on("region-click", (region, e) => {
       e.stopPropagation()
+      lastRegionClickAtRef.current = Date.now()
       if (onSeekRef.current) {
-        onSeekRef.current(region.start)
+        // region.id를 hint로 전달 — App.jsx가 시간 lookup 대신 정확한 단어 사용
+        onSeekRef.current(region.start, region.id)
       }
     })
 
     ws.on("seek", (progress) => {
       if (isDraggingRef.current || isInternalSeekRef.current) return
       const time = progress * ws.getDuration()
-      if (onSeekRef.current) onSeekRef.current(time)
-      // 파형 클릭 시 왼쪽 10% 위치로 스크롤
+      // region-click이 방금 처리되어 정확한 단어를 지목했으면 seek의 시간 기반 lookup 스킵
+      const recentRegionClick = Date.now() - lastRegionClickAtRef.current < 100
+      if (!recentRegionClick && onSeekRef.current) onSeekRef.current(time)
+      // 스크롤은 클릭 위치 기준으로 항상 수행
       if (scrollToCursorRef.current) scrollToCursorRef.current(time, true)
     })
 
@@ -369,6 +400,55 @@ export default function WaveformPanel({
     }
   }, [isUpload])
 
+  // 앞으로 보내기: 맨 위로 + 불투명도 복원 + 마우스 이벤트 다시 활성화
+  const bringToFront = useCallback((wordId) => {
+    const id = String(wordId)
+    zMaxRef.current += 1
+    zOrderRef.current.set(id, zMaxRef.current)
+    fadedRef.current.delete(id)
+    const region = activeRegionsRef.current.get(id)
+    if (region?.element) {
+      region.element.style.zIndex = String(zMaxRef.current)
+      region.element.style.opacity = "1"
+      region.element.style.pointerEvents = "auto"
+    }
+    if (region?._backBtn) {
+      region._backBtn.textContent = "▽"
+      region._backBtn.title = "뒤로 보내기"
+    }
+  }, [])
+
+  // 뒤로 보내기: 반투명 + region의 마우스 이벤트 차단 (드래그 핸들도 비활성)
+  // 버튼은 pointer-events:auto가 명시되어 있어 클릭 가능
+  const sendToBack = useCallback((wordId) => {
+    const id = String(wordId)
+    fadedRef.current.add(id)
+    const region = activeRegionsRef.current.get(id)
+    if (region?.element) {
+      region.element.style.opacity = FADED_OPACITY
+      region.element.style.pointerEvents = "none"
+    }
+    if (region?._backBtn) {
+      region._backBtn.textContent = "△"
+      region._backBtn.title = "앞으로 가져오기"
+    }
+  }, [])
+
+  // 토글
+  const toggleBack = useCallback(
+    (wordId) => {
+      const id = String(wordId)
+      if (fadedRef.current.has(id)) bringToFront(wordId)
+      else sendToBack(wordId)
+    },
+    [bringToFront, sendToBack],
+  )
+
+  const toggleBackRef = useRef(toggleBack)
+  useEffect(() => {
+    toggleBackRef.current = toggleBack
+  }, [toggleBack])
+
   // 현재 단어 하이라이트만 빠르게 업데이트
   const updateCurrentWordHighlight = useCallback(
     (time) => {
@@ -448,8 +528,8 @@ export default function WaveformPanel({
         })
 
         if (region.element) {
+          // 라벨 (단어 텍스트, 좌측 상단)
           const label = document.createElement("span")
-          // 🔥 무음일 때만 edit_points.reason 표시
           label.textContent =
             word.edit_points?.type === "silence"
               ? word.edit_points?.reason || "무음"
@@ -457,6 +537,37 @@ export default function WaveformPanel({
           label.style.cssText =
             "position:absolute;top:2px;left:4px;font-size:11px;color:#fff;white-space:nowrap;pointer-events:none;text-shadow:0 0 2px #000;"
           region.element.appendChild(label)
+
+          // 뒤로 보내기/앞으로 가져오기 토글 버튼 (우측 상단)
+          const backBtn = document.createElement("button")
+          backBtn.type = "button"
+          const isFaded = fadedRef.current.has(id)
+          backBtn.textContent = isFaded ? "△" : "▽"
+          backBtn.title = isFaded ? "앞으로 가져오기" : "뒤로 보내기"
+          backBtn.style.cssText =
+            "position:absolute;top:2px;right:2px;z-index:10;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:2px;font-size:10px;line-height:1;padding:2px 5px;cursor:pointer;pointer-events:auto;"
+          if (!isMultiSpeakerRef.current) backBtn.style.display = "none"
+          backBtn.addEventListener("mousedown", (e) => {
+            e.stopPropagation()
+          })
+          backBtn.addEventListener("click", (e) => {
+            e.stopPropagation()
+            e.preventDefault()
+            toggleBackRef.current?.(id)
+          })
+          region.element.appendChild(backBtn)
+          region._backBtn = backBtn
+
+          // 저장된 z-order 복원
+          const savedZ = zOrderRef.current.get(id)
+          if (savedZ != null) {
+            region.element.style.zIndex = String(savedZ)
+          }
+          // 반투명 상태 복원 (+ 마우스 이벤트 차단)
+          if (fadedRef.current.has(id)) {
+            region.element.style.opacity = FADED_OPACITY
+            region.element.style.pointerEvents = "none"
+          }
         }
 
         activeRegionsRef.current.set(id, region)
@@ -494,18 +605,21 @@ export default function WaveformPanel({
     const scrollLeft = wrapper.scrollLeft
 
     if (forceCenter) {
-      // 단어/파형 클릭 시 왼쪽 10% 위치에 놓기
-      const scrollPos = cursorPos - clientWidth * 0.1
-      wrapper.scrollTo({
-        left: Math.max(0, scrollPos),
-        behavior: "auto",
-      })
+      // 클릭(파형/단어): 화면 안이면 그대로, 밖이면 좌측 10% 지점으로 페이징
+      const leftEdge = scrollLeft
+      const rightEdge = scrollLeft + clientWidth
+      if (cursorPos < leftEdge || cursorPos >= rightEdge) {
+        const scrollPos = cursorPos - clientWidth * 0.1
+        wrapper.scrollTo({
+          left: Math.max(0, scrollPos),
+          behavior: "auto",
+        })
+      }
     } else {
-      // 🔥 재생 중: 커서가 보이는 영역 밖이면 스크롤
+      // 🔥 재생 중: 90% 마크 넘으면 페이지 넘기듯 좌측 10% 위치로 이동
       const leftEdge = scrollLeft
       const rightEdge = scrollLeft + clientWidth * 0.9
       if (cursorPos < leftEdge || cursorPos >= rightEdge) {
-        // 커서를 왼쪽 10% 위치에 놓기
         const scrollPos = cursorPos - clientWidth * 0.1
         wrapper.scrollTo({
           left: Math.max(0, scrollPos),
@@ -626,8 +740,11 @@ export default function WaveformPanel({
       }
     })
 
+    // 포커스된 단어의 region을 맨 앞으로 (겹친 region 중에서)
+    bringToFront(focusedId)
+
     setScrollTrigger((n) => n + 1)
-  }, [focusedWord, isReady, duration, sentences, scrollToCursor])
+  }, [focusedWord, isReady, duration, sentences, scrollToCursor, bringToFront])
 
   return (
     <div className="waveform-panel">

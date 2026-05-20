@@ -458,9 +458,35 @@ export default function App() {
     }
   }
 
-  const handleWaveformSeek = async (time) => {
+  const handleWaveformSeek = async (time, hintedWordId = null) => {
     const timelineTime = getTimelineTimeFromOriginal(time)
     await setPlayerPosition(timelineTime)
+
+    // hint가 있으면(파형 region 클릭) 시간 lookup 대신 그 단어로 직접 점프
+    if (hintedWordId != null) {
+      let foundWord = null
+      let sIdx = -1,
+        wIdx = -1
+      sentencesRef.current.forEach((s, si) => {
+        s.words?.forEach((w, wi) => {
+          if ((w.id || w.start_at) === hintedWordId) {
+            foundWord = w
+            sIdx = si
+            wIdx = wi
+          }
+        })
+      })
+      if (foundWord) {
+        setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
+        setCurrentWordId(foundWord.start_at)
+        wordRefs.current[foundWord.start_at]?.scrollIntoView({
+          behavior: "instant",
+          block: "center",
+        })
+        return
+      }
+    }
+
     if (timelineIndexRef.current) {
       const found = findCurrentWordFromIndex(
         timelineIndexRef.current,
@@ -479,6 +505,10 @@ export default function App() {
         })
         if (sIdx >= 0) setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
         setCurrentWordId(found.word.start_at)
+        wordRefs.current[found.word.start_at]?.scrollIntoView({
+          behavior: "instant",
+          block: "center",
+        })
       }
     }
   }
