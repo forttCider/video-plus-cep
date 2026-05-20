@@ -1,6 +1,112 @@
+import { useEffect, useMemo, useRef } from "react"
 import { RefreshCw, Play, AlertCircle } from "lucide-react"
 
-export default function SummaryPanel({ summary, loading, error, onRetry, onSeek }) {
+// 텍스트를 검색어 기준 segment로 쪼개고 globalIdx 기반 하이라이트 span 반환
+function renderTextWithHighlight(text, query, caseSensitive, startIdx, currentIdx, refMap) {
+  if (!query || !text) return text
+  const segs = []
+  const hay = caseSensitive ? text : text.toLowerCase()
+  const needle = caseSensitive ? query : query.toLowerCase()
+  let i = 0
+  let matchIdx = startIdx
+  while (i < text.length) {
+    const idx = hay.indexOf(needle, i)
+    if (idx === -1) {
+      if (i < text.length) segs.push(<span key={`t-${i}`}>{text.slice(i)}</span>)
+      break
+    }
+    if (idx > i) segs.push(<span key={`t-${i}`}>{text.slice(i, idx)}</span>)
+    const thisIdx = matchIdx
+    segs.push(
+      <span
+        key={`m-${thisIdx}`}
+        ref={(el) => {
+          if (el) refMap.set(thisIdx, el)
+          else refMap.delete(thisIdx)
+        }}
+        className={
+          thisIdx === currentIdx
+            ? "word-search-current-char"
+            : "word-search-match-char"
+        }
+      >
+        {text.slice(idx, idx + needle.length)}
+      </span>,
+    )
+    matchIdx += 1
+    i = idx + needle.length
+  }
+  return segs
+}
+
+function countMatches(text, query, caseSensitive) {
+  if (!query || !text) return 0
+  const hay = caseSensitive ? text : text.toLowerCase()
+  const needle = caseSensitive ? query : query.toLowerCase()
+  let count = 0
+  let i = 0
+  while ((i = hay.indexOf(needle, i)) !== -1) {
+    count += 1
+    i += needle.length
+  }
+  return count
+}
+
+export default function SummaryPanel({
+  summary,
+  loading,
+  error,
+  onRetry,
+  onSeek,
+  searchQuery = "",
+  searchCaseSensitive = false,
+  currentMatchIdx = -1,
+  onMatchCountChange,
+}) {
+  const matchRefMap = useRef(new Map())
+
+  const segments = summary?.data?.segments || summary?.segments || []
+  const overallRaw = summary?.data?.overall_summary ?? summary?.overall_summary
+  const overallLines = Array.isArray(overallRaw)
+    ? overallRaw.filter(Boolean)
+    : typeof overallRaw === "string"
+      ? overallRaw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+      : []
+
+  // 모든 텍스트 조각 순서대로 수집 (렌더 순서와 동일하게 globalIdx 부여)
+  const totalMatchCount = useMemo(() => {
+    if (!searchQuery) return 0
+    let n = 0
+    for (const line of overallLines) n += countMatches(line, searchQuery, searchCaseSensitive)
+    for (const seg of segments) {
+      n += countMatches(seg.topic || "", searchQuery, searchCaseSensitive)
+      if (seg.subtopics) {
+        for (const sub of seg.subtopics) {
+          n += countMatches(sub.title || "", searchQuery, searchCaseSensitive)
+          if (sub.points) {
+            for (const p of sub.points) {
+              n += countMatches(p, searchQuery, searchCaseSensitive)
+            }
+          }
+        }
+      }
+    }
+    return n
+  }, [searchQuery, searchCaseSensitive, overallLines, segments])
+
+  useEffect(() => {
+    onMatchCountChange?.(totalMatchCount)
+  }, [totalMatchCount, onMatchCountChange])
+
+  // currentMatchIdx 변경 시 해당 span으로 스크롤
+  useEffect(() => {
+    if (currentMatchIdx < 0) return
+    const el = matchRefMap.current.get(currentMatchIdx)
+    if (el && el.scrollIntoView) {
+      el.scrollIntoView({ block: "center" })
+    }
+  }, [currentMatchIdx])
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-8">
@@ -29,16 +135,24 @@ export default function SummaryPanel({ summary, loading, error, onRetry, onSeek 
   }
 
   if (!summary) return null
-
-  const segments = summary.data?.segments || summary.segments || []
-  const overallRaw = summary.data?.overall_summary ?? summary.overall_summary
-  const overallLines = Array.isArray(overallRaw)
-    ? overallRaw.filter(Boolean)
-    : typeof overallRaw === "string"
-      ? overallRaw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-      : []
-
   if (segments.length === 0 && overallLines.length === 0) return null
+
+  // 렌더 순서대로 globalIdx 증가시키며 highlight 적용 헬퍼
+  let runningIdx = 0
+  const renderText = (text) => {
+    if (!searchQuery) return text
+    const startIdx = runningIdx
+    const cnt = countMatches(text, searchQuery, searchCaseSensitive)
+    runningIdx += cnt
+    return renderTextWithHighlight(
+      text || "",
+      searchQuery,
+      searchCaseSensitive,
+      startIdx,
+      currentMatchIdx,
+      matchRefMap.current,
+    )
+  }
 
   return (
     <div style={{ wordBreak: "keep-all" }}>
@@ -52,7 +166,7 @@ export default function SummaryPanel({ summary, loading, error, onRetry, onSeek 
                 className="text-muted-foreground leading-snug"
                 style={{ fontSize: 12, wordBreak: "break-all" }}
               >
-                · {line}
+                · {renderText(line)}
               </p>
             ))}
           </div>
@@ -64,7 +178,7 @@ export default function SummaryPanel({ summary, loading, error, onRetry, onSeek 
             {/* 대제목 */}
             <div className="flex items-start gap-2 mb-2">
               <span className="font-bold shrink-0" style={{ fontSize: 20 }}>{seg.segment_index + 1}.</span>
-              <p className="font-bold leading-snug" style={{ fontSize: 20 }}>{seg.topic || `구간 ${seg.segment_index + 1}`}</p>
+              <p className="font-bold leading-snug" style={{ fontSize: 20 }}>{renderText(seg.topic || `구간 ${seg.segment_index + 1}`)}</p>
             </div>
             {(seg.start_time || seg.end_time) && (
               <button
@@ -81,13 +195,13 @@ export default function SummaryPanel({ summary, loading, error, onRetry, onSeek 
               {seg.subtopics?.map((sub, si) => (
                 <div key={si}>
                   <p className="font-semibold text-foreground leading-snug mb-2" style={{ fontSize: 16 }}>
-                    {seg.segment_index + 1}.{si + 1} {sub.title}
+                    {seg.segment_index + 1}.{si + 1} {renderText(sub.title)}
                   </p>
                   {/* 본문 */}
                   <div className="flex flex-col" style={{ gap: 6, paddingLeft: 16 }}>
                     {sub.points?.map((point, pi) => (
                       <p key={pi} className="text-muted-foreground leading-relaxed" style={{ fontSize: 14 }}>
-                        · {point}
+                        · {renderText(point)}
                       </p>
                     ))}
                   </div>

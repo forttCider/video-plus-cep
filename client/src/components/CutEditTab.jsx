@@ -5,6 +5,7 @@ import { Input } from "./ui/input"
 import { Slider } from "./ui/slider"
 import SentenceList from "./SentenceList"
 import SummaryPanel from "./SummaryPanel"
+import SummaryFinder from "./SummaryFinder"
 import WaveformPanel from "./WaveformPanel"
 import SearchReplaceSidebar from "./SearchReplaceSidebar"
 import { getOriginalTimeFromTimeline } from "../js/calculateTimeOffset"
@@ -70,6 +71,45 @@ export default function CutEditTab({
 }) {
   const [checkedSentences, setCheckedSentences] = useState(new Set())
   const [summaryCopied, setSummaryCopied] = useState(false)
+  // 요약 검색 상태
+  const [finderOpen, setFinderOpen] = useState(false)
+  const [finderQuery, setFinderQuery] = useState("")
+  const [finderCaseSensitive, setFinderCaseSensitive] = useState(false)
+  const [finderMatchCount, setFinderMatchCount] = useState(0)
+  const [finderCurrentIdx, setFinderCurrentIdx] = useState(-1)
+  const [finderFocusReq, setFinderFocusReq] = useState(0)
+  const handleFinderToggle = useCallback(() => {
+    setFinderOpen((v) => {
+      if (v) return false
+      setFinderFocusReq((n) => n + 1)
+      return true
+    })
+  }, [])
+  const handleFinderClose = useCallback(() => setFinderOpen(false), [])
+  const handleFinderNext = useCallback(() => {
+    setFinderCurrentIdx((i) => {
+      if (finderMatchCount === 0) return -1
+      return i < 0 ? 0 : (i + 1) % finderMatchCount
+    })
+  }, [finderMatchCount])
+  const handleFinderPrev = useCallback(() => {
+    setFinderCurrentIdx((i) => {
+      if (finderMatchCount === 0) return -1
+      return i < 0
+        ? finderMatchCount - 1
+        : (i - 1 + finderMatchCount) % finderMatchCount
+    })
+  }, [finderMatchCount])
+  const handleMatchCountChange = useCallback((n) => {
+    setFinderMatchCount(n)
+    if (n === 0) setFinderCurrentIdx(-1)
+    else
+      setFinderCurrentIdx((i) => {
+        if (i < 0) return 0 // 첫 매치로 자동 점프
+        if (i >= n) return 0
+        return i
+      })
+  }, [])
 
   const allSpkList = [
     ...new Set([
@@ -140,42 +180,70 @@ export default function CutEditTab({
             <div className="flex items-center justify-between px-4 py-2 border-b border-border">
               <span className="text-xs text-muted-foreground">스크립트 개요</span>
               {summary && (
-                <button
-                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  onClick={() => {
-                    const textarea = document.createElement("textarea")
-                    textarea.value = summaryToText(summary)
-                    textarea.style.position = "fixed"
-                    textarea.style.opacity = "0"
-                    document.body.appendChild(textarea)
-                    textarea.select()
-                    document.execCommand("copy")
-                    document.body.removeChild(textarea)
-                    setSummaryCopied(true)
-                    setTimeout(() => setSummaryCopied(false), 1500)
-                  }}
-                >
-                  {summaryCopied ? (
-                    <>
-                      <Check className="h-3 w-3" />
-                      복사됨
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-3 w-3" />
-                      복사
-                    </>
-                  )}
-                </button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6"
+                    onClick={() => {
+                      const textarea = document.createElement("textarea")
+                      textarea.value = summaryToText(summary)
+                      textarea.style.position = "fixed"
+                      textarea.style.opacity = "0"
+                      document.body.appendChild(textarea)
+                      textarea.select()
+                      document.execCommand("copy")
+                      document.body.removeChild(textarea)
+                      setSummaryCopied(true)
+                      setTimeout(() => setSummaryCopied(false), 1500)
+                    }}
+                    title={summaryCopied ? "복사됨" : "복사"}
+                  >
+                    {summaryCopied ? (
+                      <Check className="h-3.5 w-3.5" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant={finderOpen ? "default" : "ghost"}
+                    className="h-6 w-6"
+                    onClick={handleFinderToggle}
+                    title="찾기"
+                  >
+                    <Search className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               )}
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+            <SummaryFinder
+              isOpen={finderOpen}
+              onClose={handleFinderClose}
+              query={finderQuery}
+              setQuery={setFinderQuery}
+              caseSensitive={finderCaseSensitive}
+              setCaseSensitive={setFinderCaseSensitive}
+              currentIdx={finderCurrentIdx}
+              matchCount={finderMatchCount}
+              onNext={handleFinderNext}
+              onPrev={handleFinderPrev}
+              focusRequest={finderFocusReq}
+            />
+            <div
+              className="flex-1 min-h-0 px-4 py-3"
+              style={{ overflowY: "overlay" }}
+            >
               <SummaryPanel
                 summary={summary}
                 loading={summaryLoading}
                 error={summaryError}
                 onRetry={onRetrySummary}
                 onSeek={onSummarySeek}
+                searchQuery={finderOpen ? finderQuery.trim() : ""}
+                searchCaseSensitive={finderCaseSensitive}
+                currentMatchIdx={finderOpen ? finderCurrentIdx : -1}
+                onMatchCountChange={handleMatchCountChange}
               />
             </div>
           </>
