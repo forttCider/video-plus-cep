@@ -81,7 +81,7 @@ export default function useTranscribe({
       setStatus("받아쓰기 결과 가져오는 중...")
       try {
         const response = await fetch(
-          `${API_URL}/transcribe/cut/${taskId}?silence_ms=500`,
+          `${API_URL}/transcribe/cut/${taskId}?silence_ms=100`,
         )
         if (!response.ok) {
           setStatus("결과 가져오기 실패: " + response.status)
@@ -98,6 +98,9 @@ export default function useTranscribe({
               id: wordId,
               is_deleted: false,
               parent_id: sentenceId,
+              // STT 원본 시간 (드래그 후 ↺ 리셋 기준점, 절대 변경 안 함)
+              original_start_at: word.start_at,
+              original_end_at: word.end_at,
             }
             if (word.edit_points?.type === "silence") {
               const silenceWord = {
@@ -116,6 +119,8 @@ export default function useTranscribe({
                 is_edit: true,
                 silence_seconds: word.edit_points.silence_seconds,
                 is_deleted: false,
+                original_start_at: word.edit_points.start_ms,
+                original_end_at: word.edit_points.end_ms,
               }
               formattedWord.edit_points = {}
               return [silenceWord, formattedWord]
@@ -140,6 +145,8 @@ export default function useTranscribe({
                   is_edit: true,
                   silence_seconds: editPoint.silence_seconds,
                   is_deleted: false,
+                  original_start_at: editPoint.start_ms,
+                  original_end_at: editPoint.end_ms,
                 },
                 ...newFormWord,
               ]

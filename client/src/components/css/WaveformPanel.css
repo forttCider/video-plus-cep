@@ -155,6 +155,49 @@
   background-color: rgba(255, 230, 0, 0.35) !important;
 }
 
+/* 드래그된 region 시각 큐 (원본 시간과 다름) */
+.waveform-container .region-dragged {
+  border-left: 2px solid rgba(255, 200, 0, 0.95) !important;
+  border-right: 2px solid rgba(255, 200, 0, 0.95) !important;
+  box-shadow: 0 0 0 1px rgba(255, 200, 0, 0.4) inset;
+}
+
+/* region 위 컨트롤 버튼 공통 스타일 (▽/△ 토글 + ↺ 리셋) */
+.waveform-container .region-ctrl-btn {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+.waveform-container .region-ctrl-btn:hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+/* ↺ 리셋 버튼 — region 우하단 */
+.waveform-container .region-reset-btn {
+  bottom: 2px;
+  right: 2px;
+}
+
+/* ▽/△ 토글 버튼 — region 우상단 */
+.waveform-container .region-back-btn {
+  top: 2px;
+  right: 2px;
+}
+
 /* 🔥 드래그 제한 경계 닿을 때 빨간색 핸들 */
 .waveform-container .wavesurfer-handle.handle-limit {
   border-left: 4px solid #ff4444 !important;

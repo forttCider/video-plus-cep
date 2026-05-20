@@ -199,7 +199,7 @@ export default function CutEditControls({
               : parseFloat(silenceSeconds),
           ]}
           onValueChange={([v]) => onSilenceChange(String(v))}
-          min={0.5}
+          min={0.1}
           max={5}
           step={0.05}
           disabled={isUpload}
@@ -208,7 +208,7 @@ export default function CutEditControls({
         <Input
           type="number"
           step="0.05"
-          min="0.5"
+          min="0.1"
           max="5"
           value={silenceSeconds}
           onChange={(e) => onSilenceChange(e.target.value)}

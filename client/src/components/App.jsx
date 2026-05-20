@@ -247,10 +247,10 @@ export default function App() {
     timelineIndexRef.current = null
   }, [setFocusedWord])
 
-  const silenceThresholdMs = React.useMemo(
-    () => Math.round((parseFloat(silenceSeconds) || 1) * 1000),
-    [silenceSeconds],
-  )
+  const silenceThresholdMs = React.useMemo(() => {
+    const parsed = parseFloat(silenceSeconds)
+    return Math.round((Number.isFinite(parsed) ? parsed : 1) * 1000)
+  }, [silenceSeconds])
 
   const isSilenceHidden = useCallback(
     (word) =>
@@ -303,6 +303,8 @@ export default function App() {
                 end_at_tick: orig.end_at_tick,
                 start_at_sec: orig.start_at_sec,
                 end_at_sec: orig.end_at_sec,
+                original_start_at: orig.original_start_at,
+                original_end_at: orig.original_end_at,
               }
             }
             return w
@@ -425,6 +427,37 @@ export default function App() {
     )
   }
 
+  // 드래그된 단어 region을 원본 STT 위치로 되돌림 (↺ 버튼)
+  const handleResetWordTime = (wordId) => {
+    setSentences((prev) =>
+      prev.map((sentence) => ({
+        ...sentence,
+        words: sentence.words?.map((word) => {
+          const wId = String(word.id || word.start_at)
+          if (wId !== String(wordId)) return word
+          if (word.original_start_at == null || word.original_end_at == null) {
+            return word
+          }
+          return {
+            ...word,
+            start_at: word.original_start_at,
+            end_at: word.original_end_at,
+            start_at_sec: word.original_start_at / 1000,
+            end_at_sec: word.original_end_at / 1000,
+            start_at_tick: secondsToTicksAligned(
+              word.original_start_at / 1000,
+              timebaseRef.current,
+            ),
+            end_at_tick: secondsToTicksAligned(
+              word.original_end_at / 1000,
+              timebaseRef.current,
+            ),
+          }
+        }),
+      })),
+    )
+  }
+
   const handleSummarySeek = async (timeSec) => {
     const timelineTime = getTimelineTimeFromOriginal(timeSec)
     await setPlayerPosition(timelineTime)
@@ -457,9 +490,35 @@ export default function App() {
     }
   }
 
-  const handleWaveformSeek = async (time) => {
+  const handleWaveformSeek = async (time, hintedWordId = null) => {
     const timelineTime = getTimelineTimeFromOriginal(time)
     await setPlayerPosition(timelineTime)
+
+    // hint가 있으면(파형 region 클릭) 시간 lookup 대신 그 단어로 직접 점프
+    if (hintedWordId != null) {
+      let foundWord = null
+      let sIdx = -1,
+        wIdx = -1
+      sentencesRef.current.forEach((s, si) => {
+        s.words?.forEach((w, wi) => {
+          if ((w.id || w.start_at) === hintedWordId) {
+            foundWord = w
+            sIdx = si
+            wIdx = wi
+          }
+        })
+      })
+      if (foundWord) {
+        setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
+        setCurrentWordId(foundWord.start_at)
+        wordRefs.current[foundWord.start_at]?.scrollIntoView({
+          behavior: "instant",
+          block: "center",
+        })
+        return
+      }
+    }
+
     if (timelineIndexRef.current) {
       const found = findCurrentWordFromIndex(
         timelineIndexRef.current,
@@ -478,6 +537,10 @@ export default function App() {
         })
         if (sIdx >= 0) setFocusedWord({ sentenceIdx: sIdx, wordIdx: wIdx })
         setCurrentWordId(found.word.start_at)
+        wordRefs.current[found.word.start_at]?.scrollIntoView({
+          behavior: "instant",
+          block: "center",
+        })
       }
     }
   }
@@ -1077,6 +1140,7 @@ export default function App() {
             currentTime={currentTime}
             isPlayingState={isPlayingState}
             onWordTimeChange={handleWordTimeChange}
+            onResetWordTime={handleResetWordTime}
             onWaveformSeek={handleWaveformSeek}
             spkNames={spkNames}
           />
