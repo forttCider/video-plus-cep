@@ -125,6 +125,18 @@ export default function App() {
   const [peaks, setPeaks] = useState(null)
   const [peaksDuration, setPeaksDuration] = useState(null)
 
+  // === 편집자 확인 (입력값은 메모리에만 보관, 저장 시 서버로 전송) ===
+  const [workerName, setWorkerName] = useState("")
+  const [workerConfirmed, setWorkerConfirmed] = useState(false)
+  const workerRef = useRef(null)
+
+  const confirmWorker = useCallback(() => {
+    const name = (workerName || "").trim()
+    if (!name) return
+    workerRef.current = name
+    setWorkerConfirmed(true)
+  }, [workerName])
+
   // === Refs ===
   const logPanelRef = useRef(null)
   const batchAbortRef = useRef(null)
@@ -756,10 +768,7 @@ export default function App() {
     const handler = (e) => {
       // 한국어 IME 활성 시 e.key가 "f"가 아닌 한글 자모가 되므로 e.code/e.keyCode로도 확인
       const isFKey =
-        e.key === "f" ||
-        e.key === "F" ||
-        e.code === "KeyF" ||
-        e.keyCode === 70
+        e.key === "f" || e.key === "F" || e.code === "KeyF" || e.keyCode === 70
       if ((e.metaKey || e.ctrlKey) && isFKey) {
         if (sentencesRef.current.length === 0) return
         e.preventDefault()
@@ -776,7 +785,15 @@ export default function App() {
     }
     window.addEventListener("keydown", handler, true)
     return () => window.removeEventListener("keydown", handler, true)
-  }, [activeTab, cutFocusInput, subsFocusInput, cutClose, subsClose, cutIsOpen, subsIsOpen])
+  }, [
+    activeTab,
+    cutFocusInput,
+    subsFocusInput,
+    cutClose,
+    subsClose,
+    cutIsOpen,
+    subsIsOpen,
+  ])
 
   const { handleOpenHistory, handleBackupClick, handleRestoreConfirm } =
     useBackupRestore({
@@ -821,6 +838,7 @@ export default function App() {
   } = useAudioUpload({
     numSpeakersRef,
     selectedTrackIndicesRef,
+    workerRef,
     onFinish: async (taskId) => {
       await handleTranscribeFinish(taskId)
       loadedSequenceIdRef.current = sequenceInfo?.id
@@ -1013,7 +1031,36 @@ export default function App() {
         </div>
       )}
 
+      {/* 편집자 확인 게이트: 연결 확인 후 편집 화면 전에 먼저 표시 */}
+      {!isInitializing && !workerConfirmed && (
+        <div className="fixed inset-0 bg-background z-40 flex flex-col items-center justify-center px-6">
+          <div className="w-full max-w-xs flex flex-col gap-3">
+            <div className="text-center">
+              <h2 className="text-base font-semibold">편집자 확인</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                데이터 수집을 위해 편집자를 입력해주세요.
+              </p>
+            </div>
+            <input
+              autoFocus
+              type="text"
+              value={workerName}
+              onChange={(e) => setWorkerName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirmWorker()
+              }}
+              placeholder="이름"
+              className="w-full text-sm bg-transparent border border-border rounded-md px-3 py-2 outline-none focus:border-white/40"
+            />
+            <Button onClick={confirmWorker} disabled={!workerName.trim()}>
+              다음
+            </Button>
+          </div>
+        </div>
+      )}
+
       <AppHeader
+        worker={workerConfirmed ? workerName : ""}
         activeTab={activeTab}
         onTabChange={(tab) => {
           setFocusedWord(null)
@@ -1043,7 +1090,8 @@ export default function App() {
       />
       <div className="flex flex-col flex-1 min-h-0">
         {/* 다른 시퀀스의 저장된 상태가 있으면 배너 표시 */}
-        {hasSavedState &&
+        {workerConfirmed &&
+          hasSavedState &&
           !isUpload &&
           !isProcessing &&
           !bannerDismissed &&
@@ -1086,7 +1134,7 @@ export default function App() {
             availableAudioTracks={availableAudioTracks}
             selectedTrackIndices={selectedTrackIndices}
             onToggleTrack={toggleTrackSelection}
-            hasSavedState={hasSavedState}
+            hasSavedState={workerConfirmed && hasSavedState}
             isRestoring={isRestoring}
             onLoadSavedState={handleLoadSavedState}
           />

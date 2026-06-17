@@ -153,7 +153,6 @@ export default function useStatePersistence({
           sequence_id: seqId,
           subtitle: subtitleData,
         }
-
         const response = await fetch(`${API_URL}/transcribe/subtitle`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

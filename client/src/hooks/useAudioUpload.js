@@ -23,6 +23,7 @@ export default function useAudioUpload({
   addLog,
   numSpeakersRef,
   selectedTrackIndicesRef,
+  workerRef,
 }) {
   const [isUpload, setIsUpload] = useState(false)
   const [isCanceled, setIsCanceled] = useState(false)
@@ -317,6 +318,7 @@ export default function useAudioUpload({
       if (sequenceId) formData.append("sequence_id", sequenceId)
       if (numSpeakersRef?.current)
         formData.append("spk_count", String(numSpeakersRef.current))
+      if (workerRef?.current) formData.append("worker", workerRef.current)
       addLog &&
         addLog(
           "info",
