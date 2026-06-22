@@ -8,6 +8,7 @@ import LogPanel from "./LogPanel"
 import CutEditControls from "./CutEditControls"
 import CutEditTab from "./CutEditTab"
 import SubtitleEditTab from "./SubtitleEditTab"
+import PersonImageTab from "./PersonImageTab"
 import {
   Dialog,
   DialogContent,
@@ -1110,8 +1111,8 @@ export default function App() {
             </div>
           )}
 
-        {/* 받아쓰기 전 */}
-        {sentences.length === 0 && (
+        {/* 받아쓰기 전 (인물 이미지 생성 탭에서는 숨김) */}
+        {sentences.length === 0 && activeTab !== "person" && (
           <CutEditControls
             uploadFile={uploadFile}
             onClickCancel={onClickCancel}
@@ -1191,6 +1192,16 @@ export default function App() {
             onResetWordTime={handleResetWordTime}
             onWaveformSeek={handleWaveformSeek}
             spkNames={spkNames}
+          />
+        </div>
+
+        {/* 인물 이미지 생성 탭 - 받아쓰기 여부와 무관하게 동작 */}
+        <div
+          className={`flex flex-col flex-1 min-h-0 ${activeTab !== "person" ? "hidden" : ""}`}
+        >
+          <PersonImageTab
+            isConnected={isConnected}
+            worker={workerConfirmed ? workerName : ""}
           />
         </div>
 

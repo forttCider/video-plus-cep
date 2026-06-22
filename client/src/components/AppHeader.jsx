@@ -1,5 +1,13 @@
 import React from "react"
-import { History, RefreshCw, Undo2, Redo2, Download, Users, User } from "lucide-react"
+import {
+  History,
+  RefreshCw,
+  Undo2,
+  Redo2,
+  Download,
+  Users,
+  User,
+} from "lucide-react"
 import { Button } from "./ui/button"
 import {
   Tooltip,
@@ -67,6 +75,16 @@ export default function AppHeader({
             >
               자막편집
             </button>
+            <button
+              className={`text-xs font-semibold px-3 py-1 rounded-md transition-colors ${
+                activeTab === "person"
+                  ? "bg-white text-black"
+                  : "bg-transparent text-muted-foreground hover:text-white hover:bg-white/10"
+              }`}
+              onClick={() => onTabChange("person")}
+            >
+              인물 이미지 생성
+            </button>
           </div>
 
           {activeTab === "subs" && (
@@ -80,7 +98,11 @@ export default function AppHeader({
             </>
           )}
 
-          <IconBtn tip="히스토리" onClick={onOpenHistory} disabled={!canOpenHistory}>
+          <IconBtn
+            tip="히스토리"
+            onClick={onOpenHistory}
+            disabled={!canOpenHistory}
+          >
             <History className="h-3.5 w-3.5" />
           </IconBtn>
         </div>
@@ -99,18 +121,29 @@ export default function AppHeader({
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                현재 편집자: {worker} | 수정을 원할 경우 플러그인을 재시작해주세요
+                현재 편집자: {worker} | 수정을 원할 경우 플러그인을
+                재시작해주세요
               </TooltipContent>
             </Tooltip>
           )}
-          <IconBtn tip="화자 관리" onClick={onOpenSpeakers} disabled={!canEditSpeakers}>
+          <IconBtn
+            tip="화자 관리"
+            onClick={onOpenSpeakers}
+            disabled={!canEditSpeakers}
+          >
             <Users className="h-3.5 w-3.5" />
           </IconBtn>
-          <IconBtn tip="다운로드" onClick={onOpenDownload} disabled={!canDownload}>
+          <IconBtn
+            tip="다운로드"
+            onClick={onOpenDownload}
+            disabled={!canDownload}
+          >
             <Download className="h-3.5 w-3.5" />
           </IconBtn>
           {version && (
-            <span className="text-[11px] text-muted-foreground">v{version}</span>
+            <span className="text-[11px] text-muted-foreground">
+              v{version}
+            </span>
           )}
           {sequenceInfo ? (
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground border border-border rounded-full px-2.5 py-0.5">
@@ -126,8 +159,14 @@ export default function AppHeader({
               )}
             </div>
           )}
-          <IconBtn tip="시퀀스 새로고침" onClick={onRefresh} disabled={isRefreshing}>
-            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+          <IconBtn
+            tip="시퀀스 새로고침"
+            onClick={onRefresh}
+            disabled={isRefreshing}
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`}
+            />
           </IconBtn>
         </div>
       </div>

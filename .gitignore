@@ -3,6 +3,7 @@ client/node_modules/
 client/dist/
 .DS_Store
 cert.p12
+config.json
 _build/
 .history/
 
