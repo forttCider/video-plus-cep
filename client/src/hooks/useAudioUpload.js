@@ -40,7 +40,6 @@ export default function useAudioUpload({
   const isErrorRef = useRef(false)
   const currentTaskIdRef = useRef(null) // 🔥 현재 진행 중인 taskId
   const abortControllerRef = useRef(null) // 🔥 fetch 취소용
-  const isMultichannelRef = useRef(false) // 🔥 현재 업로드가 멀티채널 WAV인지
   const uploadingChunksRef = useRef(false) // 🔥 청크 업로드 중에는 폴링 진행률 덮어쓰기 차단
 
   // 에러 발생 시 렌더링된 오디오 파일 + 클라이언트 상태 정리
@@ -99,33 +98,29 @@ export default function useAudioUpload({
           addLog("info", `선택된 오디오 트랙: [${trackIndices.join(", ")}]`)
       }
 
-      // 오디오 렌더링 + ArrayBuffer 읽기
+      // 오디오 렌더링 + 트랙별 ArrayBuffer 읽기
+      // 트랙 ≥2면 파일이 그대로(게이트/멀티채널 합성 없이) 트랙별로 올라가고,
+      // 서버가 트랙별 diarize로 화자 분리·블리드 제거를 처리한다.
       const result = await renderAudioAndRead(
         (msg) => addLog && addLog("info", msg),
         { trackIndices },
       )
 
       const {
-        arrayBuffer,
+        tracks, // [{filename, path, arrayBuffer}] — 업로드 대상 (1..N)
         audioPath: renderedAudioPath, // 표시용 (mono amix)
-        uploadPath, // 실제 업로드된 파일 경로 (로그용)
-        isMultichannel,
       } = result
 
       // 오디오 경로 저장 (파형 표시용 — gate 안 걸린 mono amix)
       setAudioPath(renderedAudioPath)
 
-      // 업로드 엔드포인트 결정: 멀티채널 WAV면 /transcribe/multichannel, 아니면 /transcribe
-      isMultichannelRef.current = !!isMultichannel
-
-      // 업로드 대상 파일 로그 (실제 업로드되는 파일)
-      const uploadFileName = uploadPath
-        ? uploadPath.split(/[\\/]/).pop()
-        : "(경로 없음)"
+      // 업로드 대상 파일 로그
       addLog &&
         addLog(
           "info",
-          `업로드 파일: ${uploadFileName} (엔드포인트: ${isMultichannel ? "/transcribe/multichannel" : "/transcribe"})`,
+          `업로드 파일 ${tracks.length}개: ${tracks
+            .map((t) => t.filename)
+            .join(", ")} (엔드포인트: /transcribe)`,
         )
 
       setUploadFile((prev) => ({
@@ -135,7 +130,7 @@ export default function useAudioUpload({
       }))
 
       // 업로드 큐 등록
-      await publishQueue(arrayBuffer, uploadFileName)
+      await publishQueue(tracks)
     } catch (error) {
       console.error("[useAudioUpload] 렌더링 오류:", error)
       addLog && addLog("error", "오디오 렌더링 실패: " + error.message)
@@ -143,18 +138,23 @@ export default function useAudioUpload({
     }
   }
 
-  // 업로드 큐 등록
-  const publishQueue = async (arrayBuffer, filename = "audio.wav") => {
+  // 업로드 큐 등록 (트랙 1개: 기존 단일 스키마 / 트랙 ≥2: files 배열 스키마)
+  const publishQueue = async (tracks) => {
     addLog && addLog("info", "받아쓰기 요청 중...")
     const queueUrl = `${API_URL}/transcribe/queue`
-    const fileSizeMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(2)
+    const totalBytes = tracks.reduce(
+      (acc, t) => acc + t.arrayBuffer.byteLength,
+      0,
+    )
+    const fileSizeMB = (totalBytes / 1024 / 1024).toFixed(2)
     addLog && addLog("info", `요청 URL: ${queueUrl}`)
-    addLog && addLog("info", `업로드 파일명: ${filename}`)
     addLog &&
       addLog(
         "info",
-        `오디오 크기: ${fileSizeMB} MB (${arrayBuffer.byteLength} bytes)`,
+        `업로드 파일명: ${tracks.map((t) => t.filename).join(", ")}`,
       )
+    addLog &&
+      addLog("info", `오디오 크기 합계: ${fileSizeMB} MB (${totalBytes} bytes)`)
     addLog && addLog("info", `화자 수: ${numSpeakersRef?.current || 2}`)
     try {
       // 프로젝트/시퀀스 ID 가져오기 (청크 업로드 시 전달용)
@@ -163,11 +163,22 @@ export default function useAudioUpload({
       addLog &&
         addLog("info", `documentID: ${documentID}, sequenceID: ${seqInfo?.id}`)
 
-      const requestBody = JSON.stringify({
-        filename,
-        file_size: arrayBuffer.byteLength,
-        num_speakers: numSpeakersRef?.current || 2,
-      })
+      const requestBody = JSON.stringify(
+        tracks.length === 1
+          ? {
+              filename: tracks[0].filename,
+              file_size: tracks[0].arrayBuffer.byteLength,
+              num_speakers: numSpeakersRef?.current || 2,
+            }
+          : {
+              // 화자별 트랙 업로드: 배열 순서 = 화자(spk) 번호
+              files: tracks.map((t) => ({
+                filename: t.filename,
+                file_size: t.arrayBuffer.byteLength,
+              })),
+              num_speakers: numSpeakersRef?.current || 2,
+            },
+      )
 
       addLog && addLog("info", "fetch 호출 시작...")
       const fetchStart = Date.now()
@@ -220,14 +231,13 @@ export default function useAudioUpload({
         prev ? { ...prev, taskId: resData.task_id } : null,
       )
 
+      // 파일별 청크 계획: 서버 응답의 files 배열 사용 (구 서버 응답이면 단일 파일로 구성)
+      const filePlans = Array.isArray(resData.files)
+        ? resData.files
+        : [{ file_index: 0, total_chunks: resData.total_chunks }]
+
       // 청크 업로드 시작
-      uploadChunks(
-        resData.total_chunks,
-        arrayBuffer,
-        resData.task_id,
-        documentID,
-        seqInfo?.id,
-      )
+      uploadChunks(filePlans, tracks, resData.task_id, documentID, seqInfo?.id)
 
       // 상태 폴링 시작
       startPolling(resData.task_id)
@@ -239,48 +249,60 @@ export default function useAudioUpload({
     }
   }
 
-  // 청크 업로드
+  // 청크 업로드 (파일별 순차 업로드, file_index로 대상 파일 지정)
   const uploadChunks = async (
-    totalChunks,
-    arrayBuffer,
+    filePlans,
+    tracks,
     taskId,
     projectId,
     sequenceId,
   ) => {
     uploadingChunksRef.current = true
+    const grandTotalChunks = filePlans.reduce(
+      (acc, f) => acc + f.total_chunks,
+      0,
+    )
+    let uploadedChunks = 0
     try {
-      for (let i = 0; i < totalChunks; i++) {
-        if (isCanceledRef.current || isErrorRef.current) break
+      outer: for (let fi = 0; fi < filePlans.length; fi++) {
+        const plan = filePlans[fi]
+        const arrayBuffer = tracks[fi].arrayBuffer
 
-        const start = i * CHUNK_SIZE
-        const end = Math.min(start + CHUNK_SIZE, arrayBuffer.byteLength)
-        const chunkBuffer = arrayBuffer.slice(start, end)
-        const chunkBlob = new Blob([chunkBuffer], { type: "audio/wav" })
+        for (let i = 0; i < plan.total_chunks; i++) {
+          if (isCanceledRef.current || isErrorRef.current) break outer
 
-        const success = await uploadSingleChunk(
-          i,
-          chunkBlob,
-          taskId,
-          projectId,
-          sequenceId,
-        )
-        if (!success) {
-          clearInterval(intervalRef.current)
-          break
+          const start = i * CHUNK_SIZE
+          const end = Math.min(start + CHUNK_SIZE, arrayBuffer.byteLength)
+          const chunkBuffer = arrayBuffer.slice(start, end)
+          const chunkBlob = new Blob([chunkBuffer], { type: "audio/wav" })
+
+          const success = await uploadSingleChunk(
+            fi,
+            i,
+            chunkBlob,
+            taskId,
+            projectId,
+            sequenceId,
+          )
+          if (!success) {
+            clearInterval(intervalRef.current)
+            break outer
+          }
+
+          uploadedChunks += 1
+          const progress = Math.floor(
+            (uploadedChunks / grandTotalChunks) * UPLOAD_PROGRESS_WEIGHT,
+          )
+          setUploadFile((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  progress,
+                  message: `오디오 업로드 중... (${uploadedChunks}/${grandTotalChunks})`,
+                }
+              : null,
+          )
         }
-
-        const progress = Math.floor(
-          ((i + 1) / totalChunks) * UPLOAD_PROGRESS_WEIGHT,
-        )
-        setUploadFile((prev) =>
-          prev
-            ? {
-                ...prev,
-                progress,
-                message: `오디오 업로드 중... (${i + 1}/${totalChunks})`,
-              }
-            : null,
-        )
       }
     } finally {
       uploadingChunksRef.current = false
@@ -299,8 +321,9 @@ export default function useAudioUpload({
     }
   }
 
-  // 단일 청크 업로드
+  // 단일 청크 업로드 (file_index: 다중 트랙 업로드 시 대상 파일 순번)
   const uploadSingleChunk = async (
+    fileIndex,
     chunkIndex,
     chunk,
     taskId,
@@ -312,8 +335,9 @@ export default function useAudioUpload({
     try {
       const formData = new FormData()
       formData.append("task_id", taskId)
+      formData.append("file_index", String(fileIndex))
       formData.append("chunk_index", String(chunkIndex))
-      formData.append("chunk", chunk, `chunk_${chunkIndex}.bin`)
+      formData.append("chunk", chunk, `chunk_${fileIndex}_${chunkIndex}.bin`)
       if (projectId) formData.append("project_id", projectId)
       if (sequenceId) formData.append("sequence_id", sequenceId)
       if (numSpeakersRef?.current)
@@ -322,13 +346,10 @@ export default function useAudioUpload({
       addLog &&
         addLog(
           "info",
-          `[청크 업로드] chunk_index=${chunkIndex}, spk_count=${numSpeakersRef?.current || "(없음)"}`,
+          `[청크 업로드] file_index=${fileIndex}, chunk_index=${chunkIndex}, spk_count=${numSpeakersRef?.current || "(없음)"}`,
         )
 
-      const endpoint = isMultichannelRef.current
-        ? `${API_URL}/transcribe/multichannel`
-        : `${API_URL}/transcribe`
-      const response = await fetch(endpoint, {
+      const response = await fetch(`${API_URL}/transcribe`, {
         method: "POST",
         body: formData,
         signal: abortControllerRef.current?.signal, // 🔥 취소 가능하게

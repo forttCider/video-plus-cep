@@ -3,17 +3,7 @@
  * CSInterface.evalScript()로 ExtendScript 함수 호출
  */
 
-import {
-  readWav,
-  writeWav16,
-  toMono,
-  crosstalkReduceMulti,
-  normalizePeak,
-  normalizePeakSharedMulti,
-  downsample,
-} from "./bss-purejs"
-
-const STT_TARGET_SR = 16000
+import { readWav } from "./bss-purejs"
 
 let csInterface = null
 let extendScriptLoaded = false
@@ -568,14 +558,10 @@ export async function renderAudioAndRead(log, options = {}) {
       }
     } catch (e) {}
 
-    // 업로드용 16kHz 모노
+    // 업로드용 16kHz 모노 변환
     const ffmpegPath = getFFmpegPath()
     ensureFFmpegExecutable(ffmpegPath)
-    try {
-      fs.unlinkSync(outputPath)
-    } catch (e) {}
 
-    await mixAudioFiles(trackPaths, ffmpegPath, outputPath, 16000)
     // 표시용 8kHz 모노 — 시각화 충분 + WaveSurfer 디코드 부하 대폭 감소 (95분 ≈ 91MB)
     let displayMixOk = false
     try {
@@ -585,95 +571,72 @@ export async function renderAudioAndRead(log, options = {}) {
       console.warn("[renderAudioAndRead] display mix 실패:", e.message)
     }
 
-    // 멀티채널 WAV 생성 (pure-JS 크로스토크 제거 → N-ch WAV 직접 작성)
-    let multiChannelPath = null
-    if (trackPaths.length >= 2) {
+    // 업로드용 트랙 파일 준비 (트랙 순서 = 화자 번호)
+    //  - 트랙 1개: 16kHz 모노 단일 파일 (기존과 동일)
+    //  - 트랙 ≥2: 트랙별 16kHz 모노 파일 그대로 업로드.
+    //    크로스토크 게이트(crosstalkReduceMulti)/멀티채널 합성은 제거됨 —
+    //    서버가 트랙별 diarize(음색 기반)로 블리드를 처리하므로 원본 그대로 보내야
+    //    추임새/타임스탬프가 보존된다.
+    const uploadTracks = []
+    for (let i = 0; i < trackPaths.length; i++) {
+      const isSingle = trackPaths.length === 1
+      const trackOut = isSingle
+        ? outputPath
+        : path.join(homeDir, ".videoPlus", `videoplus_track_${i}.wav`)
       try {
-        const multiChannelDir = path.join(homeDir, ".videoPlus", "multichannel")
-        try {
-          fs.mkdirSync(multiChannelDir, { recursive: true })
-        } catch (e) {}
-
-        const wavs = trackPaths.map((p) => readWav(p))
-        const sr = wavs[0].sampleRate
-        for (const w of wavs) {
-          if (w.sampleRate !== sr) {
-            throw new Error(`샘플레이트 불일치: ${sr} vs ${w.sampleRate}`)
-          }
-        }
-        let monos = wavs.map((w) => toMono(w))
-
-        const lengths = monos.map((m) => m.length)
-        const n = Math.min(...lengths)
-        const maxLen = Math.max(...lengths)
-        if (maxLen !== n) {
-          monos = monos.map((m) => (m.length === n ? m : m.slice(0, n)))
-        }
-
-        // STT용 다운샘플링 (정수비율만 — 보통 48kHz → 16kHz)
-        let workSr = sr
-        if (sr > STT_TARGET_SR && sr % STT_TARGET_SR === 0) {
-          monos = monos.map((m) => downsample(m, sr, STT_TARGET_SR))
-          workSr = STT_TARGET_SR
-        }
-
-        // N-트랙 사이드체인 게이트
-        //   ratioDb: 0 → argmax 트랙만 열림
-        //   reductionDb: -90 → bleed 잔류를 16-bit 양자화 잡음 이하로
-        //   attackMs: 30 (느린 open), releaseMs: 3 (빠른 close)
-        //     → bleed 새기 전 즉시 닫고, 채터링성 일시 argmax 반전에도 gate가 별로 안 열림
-        const cleaned = crosstalkReduceMulti(monos, workSr, {
-          envMs: 30,
-          ratioDb: 0,
-          reductionDb: -90,
-          attackMs: 30,
-          releaseMs: 3,
-        })
-
-        multiChannelPath = path.join(
-          multiChannelDir,
-          `multichannel_${ts}_${cleaned.length}ch.wav`,
-        )
-        writeWav16(multiChannelPath, cleaned, workSr)
-      } catch (e) {
-        multiChannelPath = null
-      }
+        fs.unlinkSync(trackOut)
+      } catch (e) {}
+      await mixAudioFiles([trackPaths[i]], ffmpegPath, trackOut, 16000)
+      uploadTracks.push({
+        filename: isSingle ? "videoplus_audio.wav" : `track_${i}.wav`,
+        path: trackOut,
+      })
     }
 
-    // 트랙별 임시 파일 정리
+    // 트랙별 원본(48kHz) 임시 파일 정리
     trackPaths.forEach((p) => {
       try {
         if (p !== outputPath) fs.unlinkSync(p)
       } catch (e) {}
     })
 
-    // 업로드 대상 결정: 멀티채널 WAV 우선, 실패/단일트랙 시 모노 amix 폴백
-    const uploadPath = multiChannelPath || outputPath
-    const isMultichannel = !!multiChannelPath
-    const arrayBuffer = await readFileAsArrayBuffer(uploadPath)
-    // audioPath는 화면 표시용 — 48kHz mono amix (gate 없음, 풀 샘플레이트)
-    // displayPath 생성 실패한 경우 outputPath로 폴백
+    // 업로드용 ArrayBuffer 읽기 (파일별)
+    const tracks = []
+    for (const t of uploadTracks) {
+      tracks.push({
+        filename: t.filename,
+        path: t.path,
+        arrayBuffer: await readFileAsArrayBuffer(t.path),
+      })
+    }
+
+    // audioPath는 화면 표시용 — 8kHz mono amix (gate 없음)
+    // displayPath 생성 실패한 경우 첫 업로드 트랙으로 폴백
     // 매번 다른 문자열이 되도록 timestamp suffix — 같은 파일 경로여도 React/wavesurfer가 재로드
-    const displayAudioPath = displayMixOk ? displayPath : outputPath
+    const displayAudioPath = displayMixOk ? displayPath : uploadTracks[0].path
     const versionedAudioPath = `${displayAudioPath}?v=${Date.now()}`
     return {
-      arrayBuffer,
+      tracks,
       audioPath: versionedAudioPath,
-      uploadPath,
-      isMultichannel,
+      uploadPath: uploadTracks.map((t) => t.path).join(", "),
     }
   } catch (err) {
-    // 폴백: 기존 방식 (전체 시퀀스 한 번에 렌더링)
+    // 폴백: 기존 방식 (전체 시퀀스 한 번에 렌더링, 단일 파일)
     const result = await renderAudio()
     if (!result.success) {
       throw new Error(result.error || "렌더링 실패")
     }
     const arrayBuffer = await readFileAsArrayBuffer(result.outputPath)
     return {
-      arrayBuffer,
+      tracks: [
+        {
+          filename: "videoplus_audio.wav",
+          path: result.outputPath,
+          arrayBuffer,
+        },
+      ],
       audioPath: result.outputPath,
       uploadPath: result.outputPath,
-      isMultichannel: false,
     }
   }
 }
@@ -682,7 +645,8 @@ export async function renderAudioAndRead(log, options = {}) {
  * 받아쓰기 완료/취소 후 임시 오디오 파일 일괄 정리
  *   - 표시용 8kHz mono: ~/.videoPlus/videoplus_display_*.wav
  *   - STT 업로드용 16kHz mono: ~/.videoPlus/videoplus_audio.wav
- *   - STT 업로드용 멀티채널 WAV: ~/.videoPlus/multichannel/multichannel_*.wav
+ *   - STT 업로드용 트랙별 파일: ~/.videoPlus/videoplus_track_*.wav
+ *   - (구버전) 멀티채널 WAV: ~/.videoPlus/multichannel/multichannel_*.wav
  * 디스크 누적 방지 (회당 수백 MB ~ 수 GB)
  */
 export function cleanupAudioFile(audioPath) {
@@ -692,11 +656,15 @@ export function cleanupAudioFile(audioPath) {
     const os = require("os")
     const baseDir = path.join(os.homedir(), ".videoPlus")
 
-    // 1) 표시용 display_*.wav 일괄 삭제
+    // 1) 표시용 display_*.wav + 업로드용 트랙별 track_*.wav 일괄 삭제
     try {
       const entries = fs.readdirSync(baseDir)
       for (const entry of entries) {
-        if (entry.startsWith("videoplus_display_") && entry.endsWith(".wav")) {
+        if (
+          (entry.startsWith("videoplus_display_") ||
+            entry.startsWith("videoplus_track_")) &&
+          entry.endsWith(".wav")
+        ) {
           try {
             fs.unlinkSync(path.join(baseDir, entry))
           } catch (e) {}
