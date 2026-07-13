@@ -77,13 +77,13 @@ export default function AppHeader({
             </button>
             <button
               className={`text-xs font-semibold px-3 py-1 rounded-md transition-colors ${
-                activeTab === "person"
+                activeTab === "thumb"
                   ? "bg-white text-black"
                   : "bg-transparent text-muted-foreground hover:text-white hover:bg-white/10"
               }`}
-              onClick={() => onTabChange("person")}
+              onClick={() => onTabChange("thumb")}
             >
-              인물 이미지 생성
+              썸네일
             </button>
           </div>
 

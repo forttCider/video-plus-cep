@@ -1376,6 +1376,22 @@ function restoreFromBackup(backupId) {
     }
 }
 
+// projectItem(대상 nodeId)을 담고 있는 부모 bin을 프로젝트 트리에서 재귀 탐색.
+// 대상이 최상위에 있으면 rootItem을 반환. 못 찾으면 null.
+function findParentBin(bin, targetNodeId) {
+    for (var i = 0; i < bin.children.numItems; i++) {
+        var child = bin.children[i];
+        if (child.nodeId === targetNodeId) {
+            return bin;
+        }
+        if (child.type === 2) { // ProjectItemType.BIN
+            var found = findParentBin(child, targetNodeId);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
 function cloneAndArchiveSequence() {
     try {
         var currentSeq = app.project.activeSequence;
@@ -1403,6 +1419,13 @@ function cloneAndArchiveSequence() {
             clonedItem = rootItem.children[rootItem.children.numItems - 1];
         }
         if (!clonedItem) return '{"success":false,"error":"복제된 시퀀스를 찾을 수 없음"}';
+
+        // 2-1. 원본이 있던 폴더(부모 bin)를 기억 — 원본을 옮기기 전에 조회.
+        // 나중에 복제본(작업 시퀀스)을 이 폴더로 되돌려 넣어 원래 위치를 유지한다.
+        var originalParentBin = null;
+        if (currentSeq.projectItem) {
+            originalParentBin = findParentBin(rootItem, currentSeq.projectItem.nodeId);
+        }
 
         // 3. 원본을 Backups/원본 폴더로 이동
         var backupBin = findOrCreateBackupBin();
@@ -1436,6 +1459,12 @@ function cloneAndArchiveSequence() {
 
         // 4. clone 이름을 원본 이름으로 변경
         clonedItem.name = originalName;
+
+        // 4-1. 복제본을 원본이 있던 폴더로 이동 (clone은 항상 루트에 생기므로 되돌려 넣음).
+        // 원본이 루트에 있었으면(부모가 rootItem) 그대로 루트에 둔다.
+        if (originalParentBin && originalParentBin.nodeId !== rootItem.nodeId) {
+            try { clonedItem.moveBin(originalParentBin); } catch (e) {}
+        }
 
         // 5. clone을 활성 시퀀스로 설정
         var clonedSeq = null;
