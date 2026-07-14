@@ -51,7 +51,7 @@ export default function CutEditControls({
   // 받아쓰기 전: 중앙 정렬 초기 화면
   if (sentences.length === 0) {
     return (
-      <div className="flex flex-col flex-1 relative">
+      <div className="flex flex-col flex-1 relative min-h-0">
         {/* 불러오기 배너 + 업로드 진행 - 상단 고정 */}
         <div className="absolute top-4 left-4 right-4 z-50">
           <SavedStateBanner
@@ -66,7 +66,8 @@ export default function CutEditControls({
             onCancel={onClickCancel}
           />
         </div>
-        <div className="flex flex-col items-center justify-center flex-1 px-6 text-center gap-4">
+        <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="min-h-full flex flex-col items-center justify-center px-6 py-6 text-center gap-4">
         {/* Icon */}
         <div className="flex items-center justify-center w-16 h-16 rounded-full bg-muted mb-2">
           {isUpload ? (
@@ -180,6 +181,7 @@ export default function CutEditControls({
         <p className="text-[11px] text-muted-foreground">
           1시간 짜리 영상 &middot; 평균 4~5분 소요
         </p>
+        </div>
         </div>
       </div>
     )

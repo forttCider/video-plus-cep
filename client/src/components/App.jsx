@@ -4,11 +4,10 @@ import { Button } from "./ui/button"
 import { Card, CardContent } from "./ui/card"
 import AppHeader from "./AppHeader"
 
-import LogPanel from "./LogPanel"
 import CutEditControls from "./CutEditControls"
 import CutEditTab from "./CutEditTab"
 import SubtitleEditTab from "./SubtitleEditTab"
-import PersonImageTab from "./PersonImageTab"
+import ThumbnailTab from "./ThumbnailTab"
 import {
   Dialog,
   DialogContent,
@@ -17,6 +16,7 @@ import {
   DialogFooter,
 } from "./ui/dialog"
 import BackupHistoryDialog from "./BackupHistoryDialog"
+import ConfirmDialogHost from "./ConfirmDialogHost"
 import RestoreConfirmDialog from "./RestoreConfirmDialog"
 import ProcessingModal from "./ProcessingModal"
 import DownloadDialog from "./DownloadDialog"
@@ -102,7 +102,6 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlayingState, setIsPlayingState] = useState(false)
   const [currentWordSentenceIdx, setCurrentWordSentenceIdx] = useState(null)
-  const [logs, setLogs] = useState([])
   const [hasSavedState, setHasSavedState] = useState(false)
   const [isRestoring, setIsRestoring] = useState(false)
   const [bannerDismissed, setBannerDismissed] = useState(false)
@@ -139,7 +138,6 @@ export default function App() {
   }, [workerName])
 
   // === Refs ===
-  const logPanelRef = useRef(null)
   const batchAbortRef = useRef(null)
   const wordRefs = useRef({})
   const subsWordRefs = useRef({})
@@ -153,31 +151,8 @@ export default function App() {
   const wordSentenceIdxRef = useRef(new Map())
   const timebaseRef = useRef(8467200000n)
 
-  // === Logging ===
-  const addLog = useCallback((level, message) => {
-    setLogs((prev) => [...prev, { level, message, time: new Date() }])
-    setTimeout(() => {
-      logPanelRef.current?.scrollTo({ top: logPanelRef.current.scrollHeight })
-    }, 50)
-  }, [])
-  const clearLogs = useCallback(() => setLogs([]), [])
-  const copyLogs = useCallback(() => {
-    const text = logs
-      .map(
-        (l) =>
-          `[${l.time.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}] ${l.message}`,
-      )
-      .join("\n")
-    const textarea = document.createElement("textarea")
-    textarea.value = text
-    textarea.style.position = "fixed"
-    textarea.style.opacity = "0"
-    document.body.appendChild(textarea)
-    textarea.select()
-    document.execCommand("copy")
-    document.body.removeChild(textarea)
-    addLog("info", "로그가 클립보드에 복사되었습니다")
-  }, [logs, addLog])
+  // === Logging === (로그 창 제거됨 — addLog은 no-op로 유지해 호출부·훅 prop 호환)
+  const addLog = useCallback(() => {}, [])
 
   // === Hooks ===
   const { saveState, saveSubtitleData, loadState, checkSavedState, isSaving } =
@@ -1034,7 +1009,8 @@ export default function App() {
 
       {/* 편집자 확인 게이트: 연결 확인 후 편집 화면 전에 먼저 표시 */}
       {!isInitializing && !workerConfirmed && (
-        <div className="fixed inset-0 bg-background z-40 flex flex-col items-center justify-center px-6">
+        <div className="fixed inset-0 bg-background z-40 overflow-y-auto">
+          <div className="min-h-full flex flex-col items-center justify-center px-6 py-6">
           <div className="w-full max-w-xs flex flex-col gap-3">
             <div className="text-center">
               <h2 className="text-base font-semibold">편집자 확인</h2>
@@ -1057,8 +1033,11 @@ export default function App() {
               다음
             </Button>
           </div>
+          </div>
         </div>
       )}
+
+      <ConfirmDialogHost />
 
       <AppHeader
         worker={workerConfirmed ? workerName : ""}
@@ -1083,12 +1062,6 @@ export default function App() {
         canEditSpeakers={sentences.length > 0}
       />
 
-      <LogPanel
-        logs={logs}
-        onCopy={copyLogs}
-        onClear={clearLogs}
-        logPanelRef={logPanelRef}
-      />
       <div className="flex flex-col flex-1 min-h-0">
         {/* 다른 시퀀스의 저장된 상태가 있으면 배너 표시 */}
         {workerConfirmed &&
@@ -1111,8 +1084,8 @@ export default function App() {
             </div>
           )}
 
-        {/* 받아쓰기 전 (인물 이미지 생성 탭에서는 숨김) */}
-        {sentences.length === 0 && activeTab !== "person" && (
+        {/* 받아쓰기 전 (썸네일 탭에서는 숨김) */}
+        {sentences.length === 0 && activeTab !== "thumb" && (
           <CutEditControls
             uploadFile={uploadFile}
             onClickCancel={onClickCancel}
@@ -1195,13 +1168,14 @@ export default function App() {
           />
         </div>
 
-        {/* 인물 이미지 생성 탭 - 받아쓰기 여부와 무관하게 동작 */}
+        {/* 썸네일 소스 제작 탭 - 받아쓰기 여부와 무관하게 동작 */}
         <div
-          className={`flex flex-col flex-1 min-h-0 ${activeTab !== "person" ? "hidden" : ""}`}
+          className={`flex flex-col flex-1 min-h-0 ${activeTab !== "thumb" ? "hidden" : ""}`}
         >
-          <PersonImageTab
+          <ThumbnailTab
             isConnected={isConnected}
             worker={workerConfirmed ? workerName : ""}
+            summary={summary}
           />
         </div>
 

@@ -4,6 +4,7 @@ client/dist/
 .DS_Store
 cert.p12
 config.json
+tools/
 _build/
 .history/
 
