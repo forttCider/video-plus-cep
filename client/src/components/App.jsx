@@ -3,6 +3,7 @@ import { RefreshCw } from "lucide-react"
 import { Button } from "./ui/button"
 import { Card, CardContent } from "./ui/card"
 import AppHeader from "./AppHeader"
+import LogPanel from "./LogPanel"
 
 import CutEditControls from "./CutEditControls"
 import CutEditTab from "./CutEditTab"
@@ -57,6 +58,23 @@ import { setPlayerPosition } from "../js/cep-bridge"
 function formatBackupName() {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`
+}
+
+// CEP(file://)에서는 navigator.clipboard가 막혀 execCommand 방식 사용
+// (TitleTab 등 기존에 동작 검증된 패턴 그대로). 성공 시 "execCommand", 실패 시 null
+function copyToClipboard(text) {
+  try {
+    const textarea = document.createElement("textarea")
+    textarea.value = text
+    textarea.style.position = "fixed"
+    textarea.style.opacity = "0"
+    document.body.appendChild(textarea)
+    textarea.select()
+    const ok = document.execCommand("copy")
+    document.body.removeChild(textarea)
+    if (ok) return "execCommand"
+  } catch (e) {}
+  return null
 }
 
 export default function App() {
@@ -151,8 +169,29 @@ export default function App() {
   const wordSentenceIdxRef = useRef(new Map())
   const timebaseRef = useRef(8467200000n)
 
-  // === Logging === (로그 창 제거됨 — addLog은 no-op로 유지해 호출부·훅 prop 호환)
-  const addLog = useCallback(() => {}, [])
+  // === Logging ===
+  const [logs, setLogs] = useState([])
+  const [logPanelOpen, setLogPanelOpen] = useState(true)
+  const logPanelRef = useRef(null)
+  const addLog = useCallback((level, message) => {
+    const msg = String(message)
+    // CEP 디버거 콘솔에도 출력
+    if (level === "error") console.error(`[${level}]`, msg)
+    else if (level === "warn") console.warn(`[${level}]`, msg)
+    else console.log(`[${level}]`, msg)
+    setLogs((prev) => {
+      const next = [...prev, { level, message: msg, time: new Date() }]
+      // 최근 500줄만 유지 (메모리 누적 방지)
+      return next.length > 500 ? next.slice(next.length - 500) : next
+    })
+  }, [])
+  // 로그 추가 시 열려 있으면 맨 아래로 스크롤 (닫혀 있으면 그대로 — 자동으로 열지 않음)
+  useEffect(() => {
+    if (logPanelOpen && logPanelRef.current) {
+      logPanelRef.current.scrollTop = logPanelRef.current.scrollHeight
+    }
+  }, [logs, logPanelOpen])
+  const handleClearLogs = useCallback(() => setLogs([]), [])
 
   // === Hooks ===
   const { saveState, saveSubtitleData, loadState, checkSavedState, isSaving } =
@@ -184,6 +223,18 @@ export default function App() {
     isUploadRef,
     sentencesRef,
   })
+
+  // setStatus 필요 → useConnection 이후에 정의
+  const handleCopyLogs = useCallback(() => {
+    const text = logs
+      .map(
+        (l) => `${l.time.toLocaleTimeString("ko-KR")} [${l.level}] ${l.message}`,
+      )
+      .join("\n")
+    const ok = copyToClipboard(text)
+    setStatus(ok ? "로그 복사됨" : "로그 복사 실패")
+    return !!ok
+  }, [logs, setStatus])
 
   const { handleTranscribeFinish, resetAllState, fetchSummary } = useTranscribe(
     {
@@ -1060,6 +1111,15 @@ export default function App() {
         canDownload={sentences.length > 0}
         onOpenSpeakers={() => setShowSpeakers(true)}
         canEditSpeakers={sentences.length > 0}
+      />
+
+      <LogPanel
+        logs={logs}
+        open={logPanelOpen}
+        onToggle={() => setLogPanelOpen((v) => !v)}
+        onCopy={handleCopyLogs}
+        onClear={handleClearLogs}
+        logPanelRef={logPanelRef}
       />
 
       <div className="flex flex-col flex-1 min-h-0">

@@ -521,8 +521,29 @@ export async function renderAudioAndRead(log, options = {}) {
   const fs = require("fs")
   const { trackIndices } = options
 
+  // 로그 헬퍼 (log 콜백이 없어도 안전)
+  const L = (msg) => {
+    try {
+      log && log(msg)
+    } catch (e) {}
+  }
+  // 파일 크기(MB) 조회 헬퍼 — 존재 확인 겸용
+  const sizeMB = (p) => {
+    try {
+      return (fs.statSync(p).size / 1024 / 1024).toFixed(2) + "MB"
+    } catch (e) {
+      return "(파일 없음)"
+    }
+  }
+
   try {
     // 1. 트랙별 개별 렌더링 (선택된 트랙만)
+    L(
+      "[렌더] 트랙별 렌더링 시작" +
+        (trackIndices && trackIndices.length
+          ? ` (트랙 ${trackIndices.join(",")})`
+          : " (전체 트랙)"),
+    )
     const trackResult = await renderAudioPerTrack(trackIndices)
 
     if (
@@ -530,10 +551,28 @@ export async function renderAudioAndRead(log, options = {}) {
       !trackResult.tracks ||
       trackResult.tracks.length === 0
     ) {
-      throw new Error(trackResult.error || "트랙 렌더링 실패")
+      let rawInfo = ""
+      try {
+        rawInfo =
+          typeof trackResult === "string"
+            ? ` · 응답: ${trackResult.slice(0, 300)}`
+            : ` · 응답: ${JSON.stringify(trackResult).slice(0, 300)}`
+      } catch (e) {}
+      L(
+        "[렌더] 트랙 렌더링 실패: " +
+          (trackResult && trackResult.error
+            ? trackResult.error
+            : "(원인 미상 · 렌더된 트랙 0개)") +
+          rawInfo,
+      )
+      throw new Error(
+        (trackResult && trackResult.error) || "트랙 렌더링 실패",
+      )
     }
 
     const trackPaths = trackResult.tracks.map((t) => t.outputPath)
+    L(`[렌더] 트랙 ${trackPaths.length}개 렌더링 완료`)
+    trackPaths.forEach((p, i) => L(`  · 트랙 ${i}: ${p} [${sizeMB(p)}]`))
 
     // 2. 트랙이 1개면 그대로 사용, 여러 개면 ffmpeg amix
     const homeDir = os.homedir()
@@ -560,15 +599,23 @@ export async function renderAudioAndRead(log, options = {}) {
 
     // 업로드용 16kHz 모노 변환
     const ffmpegPath = getFFmpegPath()
-    ensureFFmpegExecutable(ffmpegPath)
+    L(`[ffmpeg] 경로: ${ffmpegPath} [${sizeMB(ffmpegPath)}]`)
+    try {
+      ensureFFmpegExecutable(ffmpegPath)
+    } catch (e) {
+      L("[ffmpeg] 실행 준비 실패: " + e.message)
+      throw e
+    }
 
     // 표시용 8kHz 모노 — 시각화 충분 + WaveSurfer 디코드 부하 대폭 감소 (95분 ≈ 91MB)
     let displayMixOk = false
     try {
       await mixAudioFiles(trackPaths, ffmpegPath, displayPath, 8000)
       displayMixOk = true
+      L(`[ffmpeg] 표시용 믹스 완료 [${sizeMB(displayPath)}]`)
     } catch (e) {
       console.warn("[renderAudioAndRead] display mix 실패:", e.message)
+      L("[ffmpeg] 표시용 믹스 실패(무시하고 진행): " + e.message)
     }
 
     // 업로드용 트랙 파일 준비 (트랙 순서 = 화자 번호)
@@ -586,7 +633,13 @@ export async function renderAudioAndRead(log, options = {}) {
       try {
         fs.unlinkSync(trackOut)
       } catch (e) {}
-      await mixAudioFiles([trackPaths[i]], ffmpegPath, trackOut, 16000)
+      try {
+        await mixAudioFiles([trackPaths[i]], ffmpegPath, trackOut, 16000)
+      } catch (e) {
+        L(`[ffmpeg] 업로드 트랙 ${i} 16kHz 변환 실패: ` + e.message)
+        throw e
+      }
+      L(`[ffmpeg] 업로드 트랙 ${i} 변환 완료 [${sizeMB(trackOut)}]`)
       uploadTracks.push({
         filename: isSingle ? "videoplus_audio.wav" : `track_${i}.wav`,
         path: trackOut,
@@ -603,10 +656,20 @@ export async function renderAudioAndRead(log, options = {}) {
     // 업로드용 ArrayBuffer 읽기 (파일별)
     const tracks = []
     for (const t of uploadTracks) {
+      let arrayBuffer
+      try {
+        arrayBuffer = await readFileAsArrayBuffer(t.path)
+      } catch (e) {
+        L(`[읽기] ${t.filename} 파일 읽기 실패: ` + e.message)
+        throw e
+      }
+      L(
+        `[읽기] ${t.filename} 로드 완료 (${(arrayBuffer.byteLength / 1024 / 1024).toFixed(2)}MB)`,
+      )
       tracks.push({
         filename: t.filename,
         path: t.path,
-        arrayBuffer: await readFileAsArrayBuffer(t.path),
+        arrayBuffer,
       })
     }
 
@@ -615,17 +678,28 @@ export async function renderAudioAndRead(log, options = {}) {
     // 매번 다른 문자열이 되도록 timestamp suffix — 같은 파일 경로여도 React/wavesurfer가 재로드
     const displayAudioPath = displayMixOk ? displayPath : uploadTracks[0].path
     const versionedAudioPath = `${displayAudioPath}?v=${Date.now()}`
+    L("[렌더] 오디오 생성 완료")
     return {
       tracks,
       audioPath: versionedAudioPath,
       uploadPath: uploadTracks.map((t) => t.path).join(", "),
     }
   } catch (err) {
+    // 1차 방식 실패 — 원인을 남기고 폴백 시도 (기존엔 조용히 삼켰음)
+    L("[렌더] 1차(트랙별) 방식 실패 → 폴백 시도: " + (err && err.message))
     // 폴백: 기존 방식 (전체 시퀀스 한 번에 렌더링, 단일 파일)
-    const result = await renderAudio()
+    let result
+    try {
+      result = await renderAudio()
+    } catch (e) {
+      L("[렌더] 폴백 렌더링 예외: " + e.message)
+      throw e
+    }
     if (!result.success) {
+      L("[렌더] 폴백 렌더링도 실패: " + (result.error || "(원인 미상)"))
       throw new Error(result.error || "렌더링 실패")
     }
+    L(`[렌더] 폴백 렌더링 성공: ${result.outputPath} [${sizeMB(result.outputPath)}]`)
     const arrayBuffer = await readFileAsArrayBuffer(result.outputPath)
     return {
       tracks: [
