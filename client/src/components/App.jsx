@@ -3,6 +3,7 @@ import { RefreshCw } from "lucide-react"
 import { Button } from "./ui/button"
 import { Card, CardContent } from "./ui/card"
 import AppHeader from "./AppHeader"
+import LogPanel from "./LogPanel"
 
 import CutEditControls from "./CutEditControls"
 import CutEditTab from "./CutEditTab"
@@ -151,8 +152,39 @@ export default function App() {
   const wordSentenceIdxRef = useRef(new Map())
   const timebaseRef = useRef(8467200000n)
 
-  // === Logging === (로그 창 제거됨 — addLog은 no-op로 유지해 호출부·훅 prop 호환)
-  const addLog = useCallback(() => {}, [])
+  // === Logging ===
+  const [logs, setLogs] = useState([])
+  const [logPanelOpen, setLogPanelOpen] = useState(true)
+  const logPanelRef = useRef(null)
+  const addLog = useCallback((level, message) => {
+    const msg = String(message)
+    // CEP 디버거 콘솔에도 출력
+    if (level === "error") console.error(`[${level}]`, msg)
+    else if (level === "warn") console.warn(`[${level}]`, msg)
+    else console.log(`[${level}]`, msg)
+    setLogs((prev) => {
+      const next = [...prev, { level, message: msg, time: new Date() }]
+      // 최근 500줄만 유지 (메모리 누적 방지)
+      return next.length > 500 ? next.slice(next.length - 500) : next
+    })
+  }, [])
+  // 로그 추가 시 열려 있으면 맨 아래로 스크롤 (닫혀 있으면 그대로 — 자동으로 열지 않음)
+  useEffect(() => {
+    if (logPanelOpen && logPanelRef.current) {
+      logPanelRef.current.scrollTop = logPanelRef.current.scrollHeight
+    }
+  }, [logs, logPanelOpen])
+  const handleCopyLogs = useCallback(() => {
+    const text = logs
+      .map(
+        (l) => `${l.time.toLocaleTimeString("ko-KR")} [${l.level}] ${l.message}`,
+      )
+      .join("\n")
+    try {
+      navigator.clipboard?.writeText(text)
+    } catch (e) {}
+  }, [logs])
+  const handleClearLogs = useCallback(() => setLogs([]), [])
 
   // === Hooks ===
   const { saveState, saveSubtitleData, loadState, checkSavedState, isSaving } =
@@ -797,12 +829,21 @@ export default function App() {
     allFillerSelected,
     handleSelectSilence,
     handleSelectFiller,
+    fillerTextOptions,
+    fillerSpeakerOptions,
+    disabledFillerTexts,
+    disabledFillerSpeakers,
+    toggleFillerText,
+    toggleFillerSpeaker,
+    setAllFillerTexts,
+    setAllFillerSpeakers,
   } = useWordSelection({
     sentences,
     selectedWordIds,
     setSelectedWordIds,
     silenceThresholdMs,
     setStatus,
+    spkNames,
   })
 
   const {
@@ -1062,6 +1103,15 @@ export default function App() {
         canEditSpeakers={sentences.length > 0}
       />
 
+      <LogPanel
+        logs={logs}
+        open={logPanelOpen}
+        onToggle={() => setLogPanelOpen((v) => !v)}
+        onCopy={handleCopyLogs}
+        onClear={handleClearLogs}
+        logPanelRef={logPanelRef}
+      />
+
       <div className="flex flex-col flex-1 min-h-0">
         {/* 다른 시퀀스의 저장된 상태가 있으면 배너 표시 */}
         {workerConfirmed &&
@@ -1132,6 +1182,14 @@ export default function App() {
             fillerCount={fillerWordIds.size}
             onSelectSilence={handleSelectSilence}
             onSelectFiller={handleSelectFiller}
+            fillerTextOptions={fillerTextOptions}
+            fillerSpeakerOptions={fillerSpeakerOptions}
+            disabledFillerTexts={disabledFillerTexts}
+            disabledFillerSpeakers={disabledFillerSpeakers}
+            onToggleFillerText={toggleFillerText}
+            onToggleFillerSpeaker={toggleFillerSpeaker}
+            onSetAllFillerTexts={setAllFillerTexts}
+            onSetAllFillerSpeakers={setAllFillerSpeakers}
             numSpeakers={numSpeakers}
             onNumSpeakersChange={(val) => {
               setNumSpeakers(val)

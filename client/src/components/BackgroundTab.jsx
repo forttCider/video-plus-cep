@@ -712,6 +712,8 @@ function ReviewAll({
       {parts.map((p) => {
         const e = getPart(p.part)
         const open = isOpen(p.part)
+        const hasElements = e.elements.length > 0
+        const isExtracting = e.extractStatus === "extracting"
         return (
           <div key={p.part} className="border border-border rounded-md bg-neutral-900/30">
             <div className="flex items-center gap-2 px-3 py-2">
@@ -731,15 +733,22 @@ function ReviewAll({
               </span>
               <button
                 onClick={() => onExtractOne(p.part, p.text)}
-                disabled={e.extractStatus === "extracting"}
-                className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50"
-                title="이 부만 다시 추출"
+                disabled={isExtracting}
+                className={
+                  hasElements
+                    ? "shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                    : "shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium bg-secondary text-secondary-foreground hover:bg-neutral-700 disabled:opacity-50"
+                }
+                title={hasElements ? "이 부만 다시 추출" : "이 부 요소 추출"}
               >
-                {e.extractStatus === "extracting" ? (
+                {isExtracting ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
+                ) : hasElements ? (
                   <RefreshCw className="h-3.5 w-3.5" />
+                ) : (
+                  <Sparkles className="h-3.5 w-3.5" />
                 )}
+                {!hasElements && (isExtracting ? "추출 중" : "추출")}
               </button>
             </div>
 
@@ -762,7 +771,7 @@ function ReviewAll({
                 ))}
                 {!e.elements.length && e.extractStatus !== "extracting" && (
                   <p className="text-[11px] text-muted-foreground py-1">
-                    아직 요소가 없습니다. 위 "전체 요소 추출"을 누르세요.
+                    아직 요소가 없습니다. 오른쪽 "추출" 또는 위 "전체 요소 추출"을 누르세요.
                   </p>
                 )}
                 <button

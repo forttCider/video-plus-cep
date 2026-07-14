@@ -9,6 +9,7 @@ import {
   Search,
   PanelLeftClose,
   PanelLeftOpen,
+  Settings2,
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
@@ -19,6 +20,7 @@ import SummaryPanel from "./SummaryPanel"
 import SummaryFinder from "./SummaryFinder"
 import WaveformPanel from "./WaveformPanel"
 import SearchReplaceSidebar from "./SearchReplaceSidebar"
+import FillerSettingsDialog from "./FillerSettingsDialog"
 import { getOriginalTimeFromTimeline } from "../js/calculateTimeOffset"
 import { summaryToText } from "../js/summaryText"
 
@@ -39,6 +41,14 @@ export default function CutEditTab({
   fillerCount = 0,
   onSelectSilence,
   onSelectFiller,
+  fillerTextOptions = [],
+  fillerSpeakerOptions = [],
+  disabledFillerTexts,
+  disabledFillerSpeakers,
+  onToggleFillerText,
+  onToggleFillerSpeaker,
+  onSetAllFillerTexts,
+  onSetAllFillerSpeakers,
   summary,
   summaryLoading,
   summaryError,
@@ -70,6 +80,7 @@ export default function CutEditTab({
 }) {
   const [checkedSentences, setCheckedSentences] = useState(new Set())
   const [summaryCopied, setSummaryCopied] = useState(false)
+  const [fillerSettingsOpen, setFillerSettingsOpen] = useState(false)
   // 사이드바(리사이즈·접기) 제어
   const sidebarRef = useRef(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -233,7 +244,7 @@ export default function CutEditTab({
               <Button
                 variant="secondary"
                 size="sm"
-                className={`h-7 text-xs shrink-0 ${allSilenceSelected ? "border border-[#ffa500] text-[#ffa500]" : ""}`}
+                className={`h-7 text-xs shrink-0 hover:bg-neutral-700 ${allSilenceSelected ? "border border-[#ffa500] text-[#ffa500]" : ""}`}
                 style={allSilenceSelected ? { border: "1px solid #ffa500", color: "#ffa500" } : {}}
                 disabled={!isConnected || isUpload || isProcessing || silenceCount === 0}
                 onClick={onSelectSilence}
@@ -241,17 +252,30 @@ export default function CutEditTab({
                 <VolumeX className={`h-3.5 w-3.5 mr-1 ${allSilenceSelected ? "text-[#ffa500]" : ""}`} />
                 {allSilenceSelected ? "무음 해제" : "무음 선택"} ({silenceCount})
               </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                className={`h-7 text-xs shrink-0 ${allFillerSelected ? "border border-[#ffa500] text-[#ffa500]" : ""}`}
+              {/* 껍데기(pill): 호버 배경 없음 → 본체/기어가 각각 독립적으로 하이라이트 */}
+              <div
+                className={`inline-flex items-center h-7 shrink-0 rounded-md overflow-hidden bg-secondary text-secondary-foreground text-xs font-medium shadow-sm ${allFillerSelected ? "text-[#ffa500]" : ""}`}
                 style={allFillerSelected ? { border: "1px solid #ffa500", color: "#ffa500" } : {}}
-                disabled={!isConnected || isUpload || isProcessing || fillerCount === 0}
-                onClick={onSelectFiller}
               >
-                <MessageCircle className={`h-3.5 w-3.5 mr-1 ${allFillerSelected ? "text-[#ffa500]" : ""}`} />
-                {allFillerSelected ? "간투사 해제" : "간투사 선택"} ({fillerCount})
-              </Button>
+                <button
+                  type="button"
+                  disabled={!isConnected || isUpload || isProcessing}
+                  onClick={onSelectFiller}
+                  className="inline-flex items-center h-full pl-3 pr-2 hover:bg-neutral-700 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  <MessageCircle className={`h-3.5 w-3.5 mr-1 ${allFillerSelected ? "text-[#ffa500]" : ""}`} />
+                  {allFillerSelected ? "간투사 해제" : "간투사 선택"} ({fillerCount})
+                </button>
+                <button
+                  type="button"
+                  title="간투사 일괄 선택 설정"
+                  disabled={!isConnected || isUpload || isProcessing}
+                  onClick={() => setFillerSettingsOpen(true)}
+                  className="inline-flex items-center h-full px-2 border-l border-current/30 hover:bg-neutral-700 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  <Settings2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </>
           )}
         </div>
@@ -458,6 +482,21 @@ export default function CutEditTab({
         {/* 검색 사이드바 */}
         {search && <SearchReplaceSidebar search={search} mode="cut" spkNames={spkNames} />}
       </div>
+
+      <FillerSettingsDialog
+        open={fillerSettingsOpen}
+        onClose={() => setFillerSettingsOpen(false)}
+        fillerCount={fillerCount}
+        fillerTextOptions={fillerTextOptions}
+        fillerSpeakerOptions={fillerSpeakerOptions}
+        disabledFillerTexts={disabledFillerTexts}
+        disabledFillerSpeakers={disabledFillerSpeakers}
+        onToggleText={onToggleFillerText}
+        onToggleSpeaker={onToggleFillerSpeaker}
+        onSetAllTexts={onSetAllFillerTexts}
+        onSetAllSpeakers={onSetAllFillerSpeakers}
+        spkNames={spkNames}
+      />
     </div>
   )
 }
