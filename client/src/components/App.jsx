@@ -24,6 +24,7 @@ import DownloadDialog from "./DownloadDialog"
 import SpeakerNameDialog from "./SpeakerNameDialog"
 import SavedStateBanner from "./SavedStateBanner"
 import { splitForSubtitles } from "../js/subtitleSplitter"
+import { normalizeFillerText } from "../js/batchEditWords"
 import {
   getActiveSequenceInfo,
   setPlayerPositionByTicks,
@@ -58,6 +59,81 @@ import { setPlayerPosition } from "../js/cep-bridge"
 function formatBackupName() {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`
+}
+
+/**
+ * 주어진 텍스트들과 같은 단어의 type을 interjection으로 지정 (멱등)
+ * 단어 추가 시점과 저장본 복원 시점에 모두 사용
+ * @returns {{sentences: Array, changed: number}}
+ */
+function applyFillerWords(sentences, texts) {
+  if (!texts || texts.size === 0) return { sentences, changed: 0 }
+  let changed = 0
+  const next = sentences.map((s) => ({
+    ...s,
+    words: s.words?.map((w) => {
+      if (
+        texts.has(normalizeFillerText(w.text)) &&
+        w.edit_points?.type !== "interjection"
+      ) {
+        changed += 1
+        return {
+          ...w,
+          // reason이 있어야 컷편집 화면에서 간투사로 시각 표시됨 (Word.jsx word-edit)
+          edit_points: {
+            ...(w.edit_points || {}),
+            type: "interjection",
+            reason: w.edit_points?.reason || "간투사",
+          },
+        }
+      }
+      return w
+    }),
+  }))
+  return { sentences: next, changed }
+}
+
+/**
+ * 주어진 텍스트들과 같은 단어에서 간투사 지정을 해제 (type/reason 제거)
+ * STT가 잡은 간투사·사용자가 추가한 것 모두 대상
+ * @returns {{sentences: Array, changed: number}}
+ */
+function removeFillerWords(sentences, texts) {
+  if (!texts || texts.size === 0) return { sentences, changed: 0 }
+  let changed = 0
+  const next = sentences.map((s) => ({
+    ...s,
+    words: s.words?.map((w) => {
+      if (
+        texts.has(normalizeFillerText(w.text)) &&
+        w.edit_points?.type === "interjection"
+      ) {
+        changed += 1
+        // type/reason만 제거하고 나머지 edit_points 필드는 보존
+        const { type, reason, ...rest } = w.edit_points
+        return { ...w, edit_points: rest }
+      }
+      return w
+    }),
+  }))
+  return { sentences: next, changed }
+}
+
+// CEP(file://)에서는 navigator.clipboard가 막혀 execCommand 방식 사용
+// (TitleTab 등 기존에 동작 검증된 패턴 그대로). 성공 시 "execCommand", 실패 시 null
+function copyToClipboard(text) {
+  try {
+    const textarea = document.createElement("textarea")
+    textarea.value = text
+    textarea.style.position = "fixed"
+    textarea.style.opacity = "0"
+    document.body.appendChild(textarea)
+    textarea.select()
+    const ok = document.execCommand("copy")
+    document.body.removeChild(textarea)
+    if (ok) return "execCommand"
+  } catch (e) {}
+  return null
 }
 
 export default function App() {
@@ -151,6 +227,12 @@ export default function App() {
   const isPlayingStateRef = useRef(false)
   const wordSentenceIdxRef = useRef(new Map())
   const timebaseRef = useRef(8467200000n)
+  // 간투사 설정 현재값 (useWordSelection 이후 effect로 동기화 — saveState가 항상 최신값을 동봉)
+  const fillerSettingsRef = useRef({
+    addedWords: new Set(),
+    disabledTexts: new Set(),
+    disabledSpeakers: new Set(),
+  })
 
   // === Logging ===
   const [logs, setLogs] = useState([])
@@ -174,16 +256,6 @@ export default function App() {
       logPanelRef.current.scrollTop = logPanelRef.current.scrollHeight
     }
   }, [logs, logPanelOpen])
-  const handleCopyLogs = useCallback(() => {
-    const text = logs
-      .map(
-        (l) => `${l.time.toLocaleTimeString("ko-KR")} [${l.level}] ${l.message}`,
-      )
-      .join("\n")
-    try {
-      navigator.clipboard?.writeText(text)
-    } catch (e) {}
-  }, [logs])
   const handleClearLogs = useCallback(() => setLogs([]), [])
 
   // === Hooks ===
@@ -195,6 +267,7 @@ export default function App() {
       selectedWordIds,
       timebaseRef,
       spkNamesRef,
+      fillerSettingsRef,
       addLog,
     })
 
@@ -216,6 +289,18 @@ export default function App() {
     isUploadRef,
     sentencesRef,
   })
+
+  // setStatus 필요 → useConnection 이후에 정의
+  const handleCopyLogs = useCallback(() => {
+    const text = logs
+      .map(
+        (l) => `${l.time.toLocaleTimeString("ko-KR")} [${l.level}] ${l.message}`,
+      )
+      .join("\n")
+    const ok = copyToClipboard(text)
+    setStatus(ok ? "로그 복사됨" : "로그 복사 실패")
+    return !!ok
+  }, [logs, setStatus])
 
   const { handleTranscribeFinish, resetAllState, fetchSummary } = useTranscribe(
     {
@@ -278,6 +363,50 @@ export default function App() {
       word.duration < silenceThresholdMs,
     [silenceThresholdMs],
   )
+
+  // [진단] 무음 데이터 확인용 — 원인 파악 후 제거 예정
+  useEffect(() => {
+    if (sentences.length === 0) return
+    let total = 0
+    let silence = 0
+    let withTicks = 0
+    let pass = 0
+    const durs = []
+    const types = {}
+    sentences.forEach((s) =>
+      s.words?.forEach((w) => {
+        total += 1
+        const t = w.edit_points?.type || "(none)"
+        types[t] = (types[t] || 0) + 1
+        if (w.edit_points?.type === "silence") {
+          silence += 1
+          durs.push(w.duration)
+          const hasTicks =
+            w.start_at_tick !== undefined && w.end_at_tick !== undefined
+          if (hasTicks) withTicks += 1
+          if (!w.is_deleted && w.duration >= silenceThresholdMs && hasTicks)
+            pass += 1
+        }
+      }),
+    )
+    addLog(
+      "info",
+      `[무음진단] threshold=${silenceThresholdMs}ms · 전체단어=${total} · silence타입=${silence} · tick있음=${withTicks} · 통과=${pass}`,
+    )
+    addLog(
+      "info",
+      `[무음진단] edit_points.type 분포: ${Object.entries(types)
+        .map(([k, v]) => `${k}:${v}`)
+        .join(", ")}`,
+    )
+    if (silence > 0) {
+      durs.sort((a, b) => (a ?? 0) - (b ?? 0))
+      addLog(
+        "info",
+        `[무음진단] silence duration(ms) ${durs.length}개: ${durs.slice(0, 40).join(", ")}${durs.length > 40 ? " …" : ""}`,
+      )
+    }
+  }, [sentences, silenceThresholdMs, addLog])
 
   // === Sentences sync ===
   useEffect(() => {
@@ -709,6 +838,7 @@ export default function App() {
     })
   }, [])
 
+
   const handleChangeSpkSubs = useCallback((sentenceIdx, newSpk) => {
     setSubsSentences((prev) => {
       const next = [...prev]
@@ -831,12 +961,17 @@ export default function App() {
     handleSelectFiller,
     fillerTextOptions,
     fillerSpeakerOptions,
+    wordTextOptions,
     disabledFillerTexts,
     disabledFillerSpeakers,
     toggleFillerText,
     toggleFillerSpeaker,
     setAllFillerTexts,
     setAllFillerSpeakers,
+    addedFillerWords,
+    markFillerWordAdded,
+    unmarkFillerWord,
+    restoreFillerSettings,
   } = useWordSelection({
     sentences,
     selectedWordIds,
@@ -845,6 +980,73 @@ export default function App() {
     setStatus,
     spkNames,
   })
+
+  // 다른 경로의 saveState에서도 현재 간투사 설정이 유실되지 않도록 ref 동기화
+  useEffect(() => {
+    fillerSettingsRef.current = {
+      addedWords: addedFillerWords,
+      disabledTexts: disabledFillerTexts,
+      disabledSpeakers: disabledFillerSpeakers,
+    }
+  }, [addedFillerWords, disabledFillerTexts, disabledFillerSpeakers])
+
+  // 간투사 단어 추가: 같은 텍스트의 모든 단어를 interjection으로 (메모리만 — DB 저장은 저장 버튼)
+  const handleAddFillerWord = useCallback(
+    (rawText) => {
+      const text = normalizeFillerText(rawText)
+      if (!text) return
+      const { sentences: next, changed } = applyFillerWords(
+        sentencesRef.current,
+        new Set([text]),
+      )
+      if (changed === 0) {
+        setStatus(`"${text}"에 해당하는 단어가 없습니다`)
+        return
+      }
+      sentencesRef.current = next
+      setSentences(next)
+      markFillerWordAdded(text)
+      setStatus(`"${text}" ${changed}개를 간투사로 지정`)
+    },
+    [markFillerWordAdded, setStatus],
+  )
+
+  // 간투사 지정 해제: 같은 텍스트의 모든 단어에서 type/reason 제거 (메모리만 — DB 저장은 저장 버튼)
+  const handleRemoveFillerWord = useCallback(
+    (rawText) => {
+      const text = normalizeFillerText(rawText)
+      if (!text) return
+      const { sentences: next, changed } = removeFillerWords(
+        sentencesRef.current,
+        new Set([text]),
+      )
+      if (changed === 0) return
+      sentencesRef.current = next
+      setSentences(next)
+      unmarkFillerWord(text)
+      setStatus(`"${text}" ${changed}개를 간투사에서 제외`)
+    },
+    [unmarkFillerWord, setStatus],
+  )
+
+  // 간투사 설정 저장 버튼 → 추가 단어(sentences 반영분) + 필터를 DB에 저장
+  const handleSaveFillerSettings = useCallback(() => {
+    saveState({
+      sentences: sentencesRef.current,
+      filler: {
+        addedWords: addedFillerWords,
+        disabledTexts: disabledFillerTexts,
+        disabledSpeakers: disabledFillerSpeakers,
+      },
+    })
+    setStatus("간투사 설정 저장됨")
+  }, [
+    saveState,
+    addedFillerWords,
+    disabledFillerTexts,
+    disabledFillerSpeakers,
+    setStatus,
+  ])
 
   const {
     uploadFile,
@@ -924,7 +1126,20 @@ export default function App() {
         if (framerateInfo.timebase)
           timebaseRef.current = BigInt(framerateInfo.timebase)
         const { restoreWords } = await import("../js/initWords")
-        const gapSentences = restoreWords(savedState.sentences)
+        let gapSentences = restoreWords(savedState.sentences)
+        // 저장된 간투사 설정이 있을 때만 복원. 없으면 건너뛰고 단어에서만 간투사 리스트를 파생.
+        if (savedState.fillerSettings) {
+          restoreFillerSettings(savedState.fillerSettings)
+          // 추가 단어 재적용 (멱등) — 재받아쓰기 등으로 타입이 빠져 있어도 다시 지정됨
+          const applied = applyFillerWords(
+            gapSentences,
+            savedState.fillerSettings.addedWords,
+          )
+          gapSentences = applied.sentences
+          if (applied.changed > 0) {
+            addLog("info", `간투사 추가 단어 재적용: ${applied.changed}개`)
+          }
+        }
         setSentences(gapSentences)
         sentencesRef.current = gapSentences
         setSilenceSeconds(savedState.silenceSeconds || "1")
@@ -1184,12 +1399,16 @@ export default function App() {
             onSelectFiller={handleSelectFiller}
             fillerTextOptions={fillerTextOptions}
             fillerSpeakerOptions={fillerSpeakerOptions}
+            wordTextOptions={wordTextOptions}
             disabledFillerTexts={disabledFillerTexts}
             disabledFillerSpeakers={disabledFillerSpeakers}
             onToggleFillerText={toggleFillerText}
             onToggleFillerSpeaker={toggleFillerSpeaker}
             onSetAllFillerTexts={setAllFillerTexts}
             onSetAllFillerSpeakers={setAllFillerSpeakers}
+            onAddFillerWord={handleAddFillerWord}
+            onRemoveFillerWord={handleRemoveFillerWord}
+            onSaveFillerSettings={handleSaveFillerSettings}
             numSpeakers={numSpeakers}
             onNumSpeakersChange={(val) => {
               setNumSpeakers(val)

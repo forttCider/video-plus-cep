@@ -1,5 +1,5 @@
 import React from "react"
-import { FILLER_TYPES } from "../js/batchEditWords"
+import { FILLER_TYPES, normalizeFillerText } from "../js/batchEditWords"
 
 export default function useWordSelection({
   sentences,
@@ -19,15 +19,49 @@ export default function useWordSelection({
   const [disabledFillerSpeakers, setDisabledFillerSpeakers] = React.useState(
     () => new Set(),
   )
+  // 사용자가 직접 간투사로 추가한 단어 텍스트 (저장/복원 대상)
+  const [addedFillerWords, setAddedFillerWords] = React.useState(() => new Set())
 
-  // 받아쓰기 전(문장 없음)으로 돌아오면 필터 초기화 → 다음 영상엔 깨끗한 상태
+  // 받아쓰기 전(문장 없음)으로 돌아오면 초기화 → 다음 영상엔 깨끗한 상태
   const isEmpty = sentences.length === 0
   React.useEffect(() => {
     if (isEmpty) {
       setDisabledFillerTexts(new Set())
       setDisabledFillerSpeakers(new Set())
+      setAddedFillerWords(new Set())
     }
   }, [isEmpty])
+
+  // 단어 추가 기록 (실제 sentences 변경은 App의 handleAddFillerWord가 담당)
+  const markFillerWordAdded = (text) => {
+    setAddedFillerWords((prev) => new Set(prev).add(text))
+  }
+
+  // 간투사 지정 해제 시 정리 (실제 sentences 변경은 App의 handleRemoveFillerWord가 담당)
+  const unmarkFillerWord = (text) => {
+    // 추가 목록에서 제거 — 안 그러면 복원 시 added_words 재적용으로 되살아난다
+    setAddedFillerWords((prev) => {
+      if (!prev.has(text)) return prev
+      const next = new Set(prev)
+      next.delete(text)
+      return next
+    })
+    // 제외 목록에서도 제거 — 나중에 같은 단어를 다시 추가했을 때 꺼진 채로 보이지 않도록
+    setDisabledFillerTexts((prev) => {
+      if (!prev.has(text)) return prev
+      const next = new Set(prev)
+      next.delete(text)
+      return next
+    })
+  }
+
+  // 저장된 설정 복원 — 저장 정보가 있을 때만 호출할 것
+  const restoreFillerSettings = (s) => {
+    if (!s) return
+    setAddedFillerWords(new Set(s.addedWords || []))
+    setDisabledFillerTexts(new Set(s.disabledTexts || []))
+    setDisabledFillerSpeakers(new Set(s.disabledSpeakers || []))
+  }
 
   const silenceWordIds = React.useMemo(() => {
     const ids = new Set()
@@ -73,7 +107,7 @@ export default function useWordSelection({
           word.end_at_tick !== undefined
         ) {
           const alive = !word.is_deleted
-          const text = (word.text || "").trim()
+          const text = normalizeFillerText(word.text)
           if (text) {
             const t = textStats.get(text) || { remaining: 0, active: 0 }
             if (alive) t.remaining += 1
@@ -117,7 +151,7 @@ export default function useWordSelection({
           FILLER_TYPES.includes(word.edit_points?.type) &&
           word.start_at_tick !== undefined &&
           word.end_at_tick !== undefined &&
-          !disabledFillerTexts.has((word.text || "").trim())
+          !disabledFillerTexts.has(normalizeFillerText(word.text))
         ) {
           ids.add(word.id || word.start_at)
         }
@@ -126,12 +160,94 @@ export default function useWordSelection({
     return ids
   }, [sentences, disabledFillerTexts, disabledFillerSpeakers])
 
+  // 필터로 "제외된" 간투사 (일괄선택 대상에서 빠진 것들)
+  const excludedFillerWordIds = React.useMemo(() => {
+    const ids = new Set()
+    sentences.forEach((sentence) => {
+      const spk = sentence.spk || 0
+      const spkDisabled = disabledFillerSpeakers.has(spk)
+      sentence.words?.forEach((word) => {
+        if (
+          !word.is_deleted &&
+          FILLER_TYPES.includes(word.edit_points?.type) &&
+          word.start_at_tick !== undefined &&
+          word.end_at_tick !== undefined &&
+          (spkDisabled || disabledFillerTexts.has(normalizeFillerText(word.text)))
+        ) {
+          ids.add(word.id || word.start_at)
+        }
+      })
+    })
+    return ids
+  }, [sentences, disabledFillerTexts, disabledFillerSpeakers])
+
+
+  // 간투사 단어 추가용 자동완성 후보: 아직 간투사가 아닌(삭제 안 된) 단어들의 고유 텍스트 + 개수
+  const wordTextOptions = React.useMemo(() => {
+    const counts = new Map()
+    sentences.forEach((sentence) => {
+      sentence.words?.forEach((word) => {
+        if (
+          !word.is_deleted &&
+          word.start_at_tick !== undefined &&
+          word.end_at_tick !== undefined &&
+          word.edit_points?.type !== "interjection"
+        ) {
+          const t = normalizeFillerText(word.text)
+          if (t) counts.set(t, (counts.get(t) || 0) + 1)
+        }
+      })
+    })
+    return [...counts.entries()]
+      .map(([text, count]) => ({ text, count }))
+      .sort((a, b) => b.count - a.count || a.text.localeCompare(b.text))
+  }, [sentences])
+
   const allSilenceSelected =
     silenceWordIds.size > 0 &&
     [...silenceWordIds].every((id) => selectedWordIds.has(id))
   const allFillerSelected =
     fillerWordIds.size > 0 &&
     [...fillerWordIds].every((id) => selectedWordIds.has(id))
+
+  // 필터 변경 "직전"의 전체선택 여부. 아래 동기화 effect가 참조한다.
+  // 별도 모드 플래그 대신 이 불변식을 쓰면, 사용자가 단어 하나를 수동으로 끄면
+  // allFillerSelected가 false가 되어 자동 포함도 스스로 꺼진다(자기 교정).
+  const prevAllFillerSelectedRef = React.useRef(false)
+
+  // 필터(화자/텍스트 체크)가 바뀔 때만 선택 상태를 동기화한다.
+  //  - 제외된 간투사 → 선택 해제 (안 그러면 fillerWordIds에서 빠져 버튼이 못 건드리는 고립 상태)
+  //  - 직전이 전체선택이었으면 → 새로 포함된 간투사도 선택 (껐다 켰을 때 왕복 보장)
+  // deps를 필터로만 한정: sentences 변경(예: 시퀀스 적용 후 선택 초기화)엔 반응하지 않아야 함.
+  React.useEffect(() => {
+    const wasAll = prevAllFillerSelectedRef.current
+    if (excludedFillerWordIds.size === 0 && !wasAll) return
+    setSelectedWordIds((prev) => {
+      const next = new Set(prev)
+      let changed = false
+      excludedFillerWordIds.forEach((id) => {
+        if (next.delete(id)) changed = true
+      })
+      if (wasAll) {
+        fillerWordIds.forEach((id) => {
+          if (!next.has(id)) {
+            next.add(id)
+            changed = true
+          }
+        })
+      }
+      return changed ? next : prev // 변화 없으면 같은 참조 → 불필요한 렌더 방지
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [disabledFillerTexts, disabledFillerSpeakers])
+
+  // 현재 전체선택 여부 기록 (다음 필터 변경 때 위 effect가 읽음).
+  // 반드시 위 동기화 effect보다 "뒤"에 선언해야 직전 값이 보존된다.
+  React.useEffect(() => {
+    if (fillerWordIds.size > 0) {
+      prevAllFillerSelectedRef.current = allFillerSelected
+    }
+  })
 
   const handleSelectSilence = () => {
     if (silenceWordIds.size === 0) {
@@ -224,8 +340,13 @@ export default function useWordSelection({
     // 간투사 필터
     fillerTextOptions,
     fillerSpeakerOptions,
+    wordTextOptions,
     disabledFillerTexts,
     disabledFillerSpeakers,
+    addedFillerWords,
+    markFillerWordAdded,
+    unmarkFillerWord,
+    restoreFillerSettings,
     toggleFillerText,
     toggleFillerSpeaker,
     setAllFillerTexts,

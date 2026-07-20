@@ -8,6 +8,17 @@ import { getTimelinePositionTick } from "./calculateTimeOffset"
 export const FILLER_TYPES = ["interjection"]
 
 /**
+ * 간투사 그룹핑 키 정규화.
+ * STT가 문장 위치에 따라 붙이는 끝 구두점(마침표·쉼표 등)을 제거해
+ * "음"·"음."·"음," 를 같은 간투사로 취급한다. (앞·중간 구두점은 유지)
+ * @param {string} text
+ * @returns {string}
+ */
+export function normalizeFillerText(text) {
+  return (text || "").trim().replace(/[\s.,!?。、！？…·]+$/, "")
+}
+
+/**
  * 인접 기반 그룹핑: 선택된 단어 사이에 비삭제/비선택 단어가 없으면 같은 그룹
  * @param {Array} selectedWords - 선택된 단어 (시간순 정렬됨)
  * @param {Array} allWords - 전체 단어 목록

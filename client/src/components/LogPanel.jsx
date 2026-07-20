@@ -1,4 +1,5 @@
-import { ClipboardCopy, X, ChevronDown, ChevronRight } from "lucide-react"
+import { useState } from "react"
+import { ClipboardCopy, Check, X, ChevronDown, ChevronRight } from "lucide-react"
 import { Button } from "./ui/button"
 
 export default function LogPanel({
@@ -9,7 +10,16 @@ export default function LogPanel({
   onClear,
   logPanelRef,
 }) {
+  const [copied, setCopied] = useState(false)
   if (logs.length === 0) return null
+
+  const handleCopy = () => {
+    const ok = onCopy?.()
+    if (ok !== false) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    }
+  }
 
   return (
     <div className="flex-shrink-0 border-b border-border">
@@ -31,10 +41,14 @@ export default function LogPanel({
             variant="ghost"
             size="icon"
             className="h-5 w-5"
-            onClick={onCopy}
+            onClick={handleCopy}
             title="로그 복사"
           >
-            <ClipboardCopy className="h-3 w-3" />
+            {copied ? (
+              <Check className="h-3 w-3 text-green-400" />
+            ) : (
+              <ClipboardCopy className="h-3 w-3" />
+            )}
           </Button>
           <Button
             variant="ghost"

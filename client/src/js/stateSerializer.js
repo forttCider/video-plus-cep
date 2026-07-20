@@ -4,6 +4,8 @@
  * 복원 시 initWords()로 BigInt 필드 재생성
  */
 
+import { normalizeFillerText } from "./batchEditWords"
+
 // initWords()에서 생성되는 BigInt 필드 목록
 const BIGINT_WORD_FIELDS = [
   "start_at_tick",
@@ -25,6 +27,7 @@ export function prepareStateForSave(
   selectedWordIds,
   timebase,
   speakers,
+  fillerSettings,
 ) {
   // sentences에서 BigInt 필드를 Number(String)로 변환하여 JSON-safe하게 저장
   const cleanSentences = sentences.map((sentence) => ({
@@ -46,6 +49,12 @@ export function prepareStateForSave(
     selected_word_ids: Array.from(selectedWordIds),
     timebase: timebase ? String(timebase) : null,
     speaker: speakers || {},
+    // 간투사 설정: 사용자가 추가한 단어 + 일괄선택 제외 목록(사용자 의도만 저장)
+    filler: {
+      added_words: Array.from(fillerSettings?.addedWords || []),
+      disabled_texts: Array.from(fillerSettings?.disabledTexts || []),
+      disabled_speakers: Array.from(fillerSettings?.disabledSpeakers || []),
+    },
     saved_at: new Date().toISOString(),
   }
 }
@@ -62,6 +71,20 @@ export function restoreStateFromData(data, audioPath) {
     selectedWordIds: new Set(data.selected_word_ids || []),
     timebase: data.timebase ? BigInt(data.timebase) : null,
     speakers: data.speaker || data.speakers || {},
+    // 저장된 간투사 설정이 있을 때만 반환. 없으면 null → 복원을 건너뛰고
+    // 간투사 리스트는 순수하게 단어(edit_points.type)에서만 파생된다.
+    // 텍스트 키는 정규화(끝 구두점 제거) — 예전에 "음." 원문으로 저장된 데이터도 매칭되게.
+    fillerSettings: data.filler
+      ? {
+          addedWords: new Set(
+            (data.filler.added_words || []).map(normalizeFillerText),
+          ),
+          disabledTexts: new Set(
+            (data.filler.disabled_texts || []).map(normalizeFillerText),
+          ),
+          disabledSpeakers: new Set(data.filler.disabled_speakers || []),
+        }
+      : null,
   }
 }
 

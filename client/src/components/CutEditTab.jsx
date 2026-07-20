@@ -43,12 +43,16 @@ export default function CutEditTab({
   onSelectFiller,
   fillerTextOptions = [],
   fillerSpeakerOptions = [],
+  wordTextOptions = [],
   disabledFillerTexts,
   disabledFillerSpeakers,
   onToggleFillerText,
   onToggleFillerSpeaker,
   onSetAllFillerTexts,
   onSetAllFillerSpeakers,
+  onAddFillerWord,
+  onRemoveFillerWord,
+  onSaveFillerSettings,
   summary,
   summaryLoading,
   summaryError,
@@ -489,12 +493,16 @@ export default function CutEditTab({
         fillerCount={fillerCount}
         fillerTextOptions={fillerTextOptions}
         fillerSpeakerOptions={fillerSpeakerOptions}
+        wordTextOptions={wordTextOptions}
         disabledFillerTexts={disabledFillerTexts}
         disabledFillerSpeakers={disabledFillerSpeakers}
         onToggleText={onToggleFillerText}
         onToggleSpeaker={onToggleFillerSpeaker}
         onSetAllTexts={onSetAllFillerTexts}
         onSetAllSpeakers={onSetAllFillerSpeakers}
+        onAddFillerWord={onAddFillerWord}
+        onRemoveText={onRemoveFillerWord}
+        onSave={onSaveFillerSettings}
         spkNames={spkNames}
       />
     </div>

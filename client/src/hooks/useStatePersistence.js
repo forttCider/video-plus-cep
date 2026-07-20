@@ -25,6 +25,7 @@ export default function useStatePersistence({
   selectedWordIds,
   timebaseRef,
   spkNamesRef,
+  fillerSettingsRef,
   addLog,
 }) {
   const [isSaving, setIsSaving] = useState(false)
@@ -58,6 +59,8 @@ export default function useStatePersistence({
           overrides.selectedWordIds ?? selectedWordIds,
           timebaseRef.current,
           overrides.speakers ?? spkNamesRef?.current ?? {},
+          // 다른 경로의 저장에서도 현재 간투사 설정이 유실되지 않도록 ref로 항상 동봉
+          overrides.filler ?? fillerSettingsRef?.current,
         )
 
         const payload = {

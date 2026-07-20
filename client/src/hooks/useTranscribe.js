@@ -88,6 +88,47 @@ export default function useTranscribe({
           return
         }
         const getSentences = await response.json()
+        // [원본진단] 서버 응답에 무음이 어떤 형태로 오는지 확인 — 파악 후 제거
+        try {
+          const utts = getSentences?.data?.utterances || []
+          const firstU = utts[0] || {}
+          const firstW = firstU.words?.[0] || {}
+          addLog(
+            "info",
+            `[원본] data keys: ${Object.keys(getSentences?.data || {}).join(",")} · utterance keys: ${Object.keys(firstU).join(",")} · word keys: ${Object.keys(firstW).join(",")}`,
+          )
+          const rawTypes = {}
+          let sil = 0
+          let hasDur = 0
+          let hasSilSec = 0
+          let uttSil = 0
+          utts.forEach((u) => {
+            if (u.edit_points?.type === "silence") uttSil += 1
+            u.words?.forEach((w) => {
+              const t = w.edit_points?.type || "(none)"
+              rawTypes[t] = (rawTypes[t] || 0) + 1
+              if (w.edit_points?.type === "silence") sil += 1
+              if (w.edit_points?.duration_ms != null) hasDur += 1
+              if (w.edit_points?.silence_seconds != null) hasSilSec += 1
+            })
+          })
+          addLog(
+            "info",
+            `[원본] word.edit_points.type: ${Object.entries(rawTypes)
+              .map(([k, v]) => `${k}:${v}`)
+              .join(", ")}`,
+          )
+          addLog(
+            "info",
+            `[원본] silence단어=${sil} · duration_ms필드=${hasDur} · silence_seconds필드=${hasSilSec} · utterance레벨silence=${uttSil}`,
+          )
+          addLog(
+            "info",
+            `[원본] 첫 word.edit_points: ${JSON.stringify(firstW.edit_points)}`,
+          )
+        } catch (e) {
+          addLog("warn", "[원본] 진단 실패: " + e.message)
+        }
         const newSentences = getSentences.data.utterances.map((sentence) => {
           const editPoint = sentence.edit_points
           const sentenceId = generateRandomId()
