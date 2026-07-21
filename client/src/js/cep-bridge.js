@@ -1019,10 +1019,18 @@ export async function deleteWordBySourceTicks(
 export async function deleteWordByTimelineTicks(
   timelineStartTicks,
   timelineEndTicks,
+  crossfadeSeconds = 0,
 ) {
   return evalJSON(
-    `deleteWordByTimelineTicks("${timelineStartTicks}", "${timelineEndTicks}")`,
+    `deleteWordByTimelineTicks("${timelineStartTicks}", "${timelineEndTicks}", ${Number(crossfadeSeconds) || 0})`,
   )
+}
+
+/**
+ * 사용 가능한 오디오 트랜지션 목록/매칭 결과 확인 (크로스페이드 검증용)
+ */
+export async function listAudioTransitions() {
+  return evalJSON("listAudioTransitions()")
 }
 
 /**

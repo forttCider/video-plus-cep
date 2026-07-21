@@ -541,7 +541,86 @@ function razorTracksAtTime(timecode, targetTicks) {
     }
 }
 
-function deleteWordByTimelineTicks(timelineStartTicks, timelineEndTicks) {
+// ─── 오디오 크로스페이드 (QE DOM, undocumented) ───
+// 트랜지션 이름은 UI 언어에 따라 로컬라이즈됨 → 세션 1회 탐색해 이름만 캐시, 객체는 매번 새로 get(stale 방지)
+var _xfMatchedName = null; // "" = 못 찾음, null = 아직 탐색 전
+var _xfNames = "";         // 사용 가능한 전체 이름 목록 (| 구분, 디버그용)
+
+function _discoverCrossfadeName() {
+    if (_xfMatchedName !== null) return;
+    var names = [];
+    try {
+        var list = qe.project.getAudioTransitionList();
+        var n = list ? ((typeof list.length === "number") ? list.length : (list.numItems || 0)) : 0;
+        for (var i = 0; i < n; i++) {
+            var it = list[i];
+            if (!it && list.getItemAt) it = list.getItemAt(i);
+            if (it && it.name) names.push(it.name);
+        }
+    } catch (e) {}
+    _xfNames = names.join("|");
+    var found = "";
+    var candidates = ["Constant Power", "일정한 파워", "고른 파워", "Constant Gain", "일정한 게인"];
+    for (var c = 0; c < candidates.length; c++) {
+        try { if (qe.project.getAudioTransitionByName(candidates[c])) { found = candidates[c]; break; } } catch (e) {}
+    }
+    if (!found) {
+        for (var k = 0; k < names.length; k++) {
+            if (names[k].indexOf("Power") >= 0 || names[k].indexOf("파워") >= 0 || names[k].indexOf("Constant") >= 0 || names[k].indexOf("Gain") >= 0 || names[k].indexOf("게인") >= 0) {
+                found = names[k]; break;
+            }
+        }
+    }
+    _xfMatchedName = found;
+}
+
+function _getCrossfadeXf() {
+    _discoverCrossfadeName();
+    if (!_xfMatchedName) return null;
+    try { return qe.project.getAudioTransitionByName(_xfMatchedName); } catch (e) { return null; }
+}
+
+// 사용 가능한 오디오 트랜지션 목록 확인용 (검증 단계)
+function listAudioTransitions() {
+    try {
+        app.enableQE();
+        _xfMatchedName = null; // 강제 재탐색
+        _discoverCrossfadeName();
+        return '{"success":true,"matched":"' + _xfMatchedName + '","names":"' + _xfNames.replace(/"/g, '\\"') + '"}';
+    } catch (e) {
+        return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
+    }
+}
+
+// cutTicks 위치(맞닿는 클립 경계)에서 시작하는 뒷클립을 찾아 크로스페이드 적용
+// audioTrackCount = 스캔할 오디오 트랙 수, durFrames = 프레임 길이. returns {applied, failed}
+function _applyCrossfadeAtCut(qeSeq, audioTrackCount, cutTicks, durFrames, xf) {
+    var TPS = 254016000000;
+    var cutSecs = parseFloat(cutTicks) / TPS;
+    var seq = app.project.activeSequence;
+    var ticksPerFrame = parseFloat(seq.timebase);
+    var halfFrameSecs = (ticksPerFrame / TPS) / 2;
+    var applied = 0, failed = 0;
+    var dur = String(durFrames);
+    for (var t = 0; t < audioTrackCount; t++) {
+        var track = qeSeq.getAudioTrackAt(t);
+        if (!track) continue;
+        for (var c = 0; c < track.numItems; c++) {
+            var item = track.getItemAt(c);
+            if (!item || item.type === "Empty") continue;
+            if (Math.abs(item.start.secs - cutSecs) < halfFrameSecs) {
+                var ok = false;
+                // addToStart=true, offset "0:00", alignment 0.5(중앙), singleSided=false(양면), alignToVideo=false
+                try { ok = item.addTransition(xf, true, dur, "0:00", 0.5, false, false); } catch (e) { ok = false; }
+                if (ok) applied++; else failed++;
+                break;
+            }
+        }
+    }
+    return { applied: applied, failed: failed };
+}
+
+function deleteWordByTimelineTicks(timelineStartTicks, timelineEndTicks, crossfadeSeconds) {
     try {
         app.enableQE();
         var seq = app.project.activeSequence;
@@ -632,9 +711,28 @@ function deleteWordByTimelineTicks(timelineStartTicks, timelineEndTicks) {
         if (deletedCount === 0) {
             return '{"success":false,"error":"삭제할 클립을 찾지 못함","deletedClips":0,"requestedStart":"' + timelineStartTicks + '","requestedEnd":"' + timelineEndTicks + '","razorStart":"' + timelineStartTicks + '","razorEnd":"' + timelineEndTicks + '"}';
         }
+        // === 크로스페이드 (컷 지점에 바로 적용) ===
+        var xfApplied = 0, xfFailed = 0, cfFrames = 0;
+        var cfSecs = (typeof crossfadeSeconds !== "undefined" && crossfadeSeconds !== null) ? parseFloat(crossfadeSeconds) : 0;
+        if (cfSecs > 0 && deletedCount > 0) {
+            try {
+                // 초 → 프레임 (fps 무관 최소 1프레임 보장)
+                var fps = 254016000000 / parseFloat(seq.timebase);
+                cfFrames = Math.max(1, Math.round(cfSecs * fps));
+                // ripple delete 후 stale 참조 방지 — QE 시퀀스 재획득
+                var qeSeq2 = qe.project.getActiveSequence();
+                var xf = _getCrossfadeXf();
+                if (qeSeq2 && xf) {
+                    // ripple delete 후 컷 지점 = timelineStartTicks (뒷클립이 앞으로 당겨져 맞닿음)
+                    var r = _applyCrossfadeAtCut(qeSeq2, seq.audioTracks.numTracks, timelineStartTicks, cfFrames, xf);
+                    xfApplied = r.applied; xfFailed = r.failed;
+                }
+            } catch (e) {}
+        }
+
         // 실제 삭제된 tick 범위도 반환
         var actualDuration = parseFloat(timelineEndTicks) - parseFloat(timelineStartTicks);
-        return '{"success":true,"deletedClips":' + deletedCount + ',"actualLeftOutPoint":"' + actualLeftOutPoint + '","actualRightInPoint":"' + actualRightInPoint + '","razorStart":"' + timelineStartTicks + '","razorEnd":"' + timelineEndTicks + '","actualDuration":"' + actualDuration + '"}';
+        return '{"success":true,"deletedClips":' + deletedCount + ',"actualLeftOutPoint":"' + actualLeftOutPoint + '","actualRightInPoint":"' + actualRightInPoint + '","razorStart":"' + timelineStartTicks + '","razorEnd":"' + timelineEndTicks + '","actualDuration":"' + actualDuration + '","xfApplied":' + xfApplied + ',"xfFailed":' + xfFailed + ',"xfName":"' + (_xfMatchedName || "") + '"}';
     } catch (e) {
         return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
     }

@@ -56,6 +56,8 @@ export default function CutEditTab({
   setFocusedWord,
   onChangeSpk,
   onApply,
+  crossfadeEnabled = true,
+  onCrossfadeToggle,
   onSummarySeek,
   audioPath,
   peaks,
@@ -257,6 +259,18 @@ export default function CutEditTab({
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          <label
+            className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none whitespace-nowrap"
+            title="컷 지점에 오디오 크로스페이드를 자동 적용해 클릭 노이즈(뚝 끊김)를 제거합니다"
+          >
+            <input
+              type="checkbox"
+              checked={crossfadeEnabled}
+              onChange={(e) => onCrossfadeToggle?.(e.target.checked)}
+              className="accent-primary"
+            />
+            크로스페이드
+          </label>
           {search && (
             <Button
               size="sm"

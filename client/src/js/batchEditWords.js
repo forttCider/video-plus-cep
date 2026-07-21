@@ -108,7 +108,7 @@ function calculateGroupGaps(groups, allWords) {
  * @param {Function} onProgress - 진행률 콜백 (current, total)
  * @returns {Promise<{deletedWordIds: Set, success: boolean}>}
  */
-export async function batchDeleteWords(filterFn, sentences, onProgress, addLog, signal) {
+export async function batchDeleteWords(filterFn, sentences, onProgress, addLog, signal, crossfadeSeconds = 0) {
   // 1. 전체 단어에서 조건에 맞는 단어 필터링
   const allWords = sentences.flatMap((s) =>
     s.words
@@ -190,14 +190,22 @@ export async function batchDeleteWords(filterFn, sentences, onProgress, addLog, 
       )
 
     try {
-      // razor + delete
+      // razor + delete (+ 컷 지점 크로스페이드)
       const result = await deleteWordByTimelineTicks(
         timelineStartTick.toString(),
         timelineEndTick.toString(),
+        crossfadeSeconds,
       )
 
       if (result?.success) {
         deletedWords.push(...group)
+        if (result.xfName !== undefined && (result.xfApplied || result.xfFailed)) {
+          addLog &&
+            addLog(
+              "info",
+              `[크로스페이드] 적용 ${result.xfApplied} / 실패 ${result.xfFailed} (${result.xfName || "트랜지션 못찾음"})`,
+            )
+        }
         for (const w of group) {
           addLog && addLog("info", `✅ 삭제: "${w.text || ""}" (${w.start_at.toFixed(2)}s)`)
         }

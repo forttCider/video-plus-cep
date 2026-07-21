@@ -8,6 +8,9 @@ import {
   applyDeleteResult,
 } from "../js/batchEditWords"
 
+// 컷 지점 클릭 노이즈 제거용 크로스페이드 길이(초). 프레임 제약상 최소 1프레임으로 적용됨.
+const CROSSFADE_SECONDS = 0.02
+
 export default function useBatchEdit({
   sentencesRef,
   setSentences,
@@ -24,6 +27,7 @@ export default function useBatchEdit({
   formatBackupName,
   loadedSequenceIdRef,
   sequenceInfo,
+  crossfadeEnabledRef,
 }) {
   const handleApplySelected = async () => {
     if (isProcessing || selectedWordIds.size === 0) {
@@ -56,6 +60,9 @@ export default function useBatchEdit({
         )
       }
       batchAbortRef.current = new AbortController()
+      const crossfadeSeconds = crossfadeEnabledRef?.current
+        ? CROSSFADE_SECONDS
+        : 0
       const { deletedWordIds: actuallyDeleted, wordGaps } =
         await batchDeleteWords(
           filterFn,
@@ -64,6 +71,7 @@ export default function useBatchEdit({
             setBatchProgress({ current, total, label: "일괄 적용" }),
           addLog,
           batchAbortRef.current.signal,
+          crossfadeSeconds,
         )
       if (actuallyDeleted.size > 0) {
         const updated = applyDeleteResult(

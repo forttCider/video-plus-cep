@@ -116,6 +116,13 @@ export default function App() {
   }, [])
   const [audioPath, setAudioPath] = useState(null)
   const [silenceSeconds, setSilenceSeconds] = useState("1")
+  // 컷 지점 오디오 크로스페이드 자동 적용 (클릭 노이즈 제거)
+  const [crossfadeEnabled, setCrossfadeEnabledState] = useState(true)
+  const crossfadeEnabledRef = useRef(true)
+  const setCrossfadeEnabled = useCallback((v) => {
+    crossfadeEnabledRef.current = v
+    setCrossfadeEnabledState(v)
+  }, [])
   const [showProcessingModal, setShowProcessingModal] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlayingState, setIsPlayingState] = useState(false)
@@ -654,6 +661,7 @@ export default function App() {
     formatBackupName,
     loadedSequenceIdRef,
     sequenceInfo,
+    crossfadeEnabledRef,
   })
 
   const handleStartEditing = useCallback((sentenceIdx, wordIdx) => {
@@ -1215,6 +1223,8 @@ export default function App() {
             setFocusedWord={setFocusedWord}
             onChangeSpk={handleChangeSpkCut}
             onApply={handleApplySelected}
+            crossfadeEnabled={crossfadeEnabled}
+            onCrossfadeToggle={setCrossfadeEnabled}
             onSummarySeek={handleSummarySeek}
             audioPath={audioPath}
             peaks={peaks}
