@@ -45,20 +45,27 @@ export function buildTimelineIndex(sentences) {
       const startTick = BigInt(word.start_at_tick || 0);
       const endTick = BigInt(word.end_at_tick || 0);
       const gapTick = BigInt(word.gap_after_tick || 0);
-      const durationTick = endTick - startTick + gapTick;
 
       // 삭제 구간 저장 (연속/겹치는 구간 병합 — gap 포함)
       // 새 word가 lastInterval 내부에 완전히 포함되거나 끝점이 lastInterval보다
-      // 작은 경우에도 interval이 줄어들지 않도록 max로 확장
+      // 작은 경우에도 interval이 줄어들지 않도록 max로 확장.
+      // accumulatedOffsetTick도 반드시 "병합된 실제 삭제량"만 더해야 한다 —
+      // 겹치는 구간을 개별 duration으로 중복 합산하면 하이라이트 오프셋이 과다해져
+      // 재생 위치와 어긋난다(파형은 병합해서 맞는데 트랜스크립트만 틀리던 원인).
       const lastInterval = deletedIntervals[deletedIntervals.length - 1];
       const newEnd = endTick + gapTick;
       if (lastInterval && lastInterval.endTick >= startTick) {
+        // 겹침/인접 → 병합. 기존 끝점 너머로 확장된 부분만 오프셋에 반영
         if (newEnd > lastInterval.endTick) {
+          accumulatedOffsetTick += newEnd - lastInterval.endTick;
           lastInterval.endTick = newEnd;
           lastInterval.durationTick = lastInterval.endTick - lastInterval.startTick;
         }
-        // newEnd <= lastInterval.endTick: 새 word가 기존 interval 안에 포함 → 확장 불필요
+        // newEnd <= lastInterval.endTick: 기존 구간에 완전 포함 → 추가 삭제량 없음
       } else {
+        // 새 독립 구간
+        const durationTick = newEnd - startTick;
+        accumulatedOffsetTick += durationTick;
         deletedIntervals.push({
           startTick,
           endTick: newEnd,
@@ -66,7 +73,6 @@ export function buildTimelineIndex(sentences) {
         });
       }
 
-      accumulatedOffsetTick += durationTick;
       continue;
     }
 
