@@ -12,7 +12,7 @@ import {
 } from "../js/cep-bridge"
 
 const API_URL =
-  process.env.REACT_APP_VIDEO_API_URL || "https://vapi.cidermics.com"
+  process.env.REACT_APP_VIDEO_API_URL || "http://localhost:8000"
 const CHUNK_SIZE = 64 * 1024 * 1024 // 64MB
 const UPLOAD_PROGRESS_WEIGHT = 30 // 전체 진행률 중 업로드 단계 비중 (%) — 나머지는 트랜스크립션
 

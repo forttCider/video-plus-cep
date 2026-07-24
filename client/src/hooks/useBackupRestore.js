@@ -8,7 +8,7 @@ import {
 import { prepareStateForSave } from "../js/stateSerializer"
 
 const API_URL =
-  process.env.REACT_APP_VIDEO_API_URL || "https://vapi.cidermics.com"
+  process.env.REACT_APP_VIDEO_API_URL || "http://localhost:8000"
 
 export default function useBackupRestore({
   sentencesRef,

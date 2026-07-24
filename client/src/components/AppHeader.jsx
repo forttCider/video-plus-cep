@@ -85,6 +85,16 @@ export default function AppHeader({
             >
               인물 이미지 생성
             </button>
+            <button
+              className={`text-xs font-semibold px-3 py-1 rounded-md transition-colors ${
+                activeTab === "tts"
+                  ? "bg-white text-black"
+                  : "bg-transparent text-muted-foreground hover:text-white hover:bg-white/10"
+              }`}
+              onClick={() => onTabChange("tts")}
+            >
+              발음 교정
+            </button>
           </div>
 
           {activeTab === "subs" && (

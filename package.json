@@ -8,7 +8,10 @@
     "dev": "cd client && npm run dev",
     "install:client": "cd client && npm install",
     "link": "node scripts/link.js",
-    "unlink": "node scripts/unlink.js"
+    "unlink": "node scripts/unlink.js",
+    "mode:dev": "node scripts/mode.js dev",
+    "mode:release": "node scripts/mode.js release",
+    "mode:status": "node scripts/mode.js status"
   },
   "author": "cidermics",
   "license": "UNLICENSED",

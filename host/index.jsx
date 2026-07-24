@@ -3058,6 +3058,93 @@ function insertAdjustmentLayers(filePath) {
 }
 
 // ========================================
+// 발음 교정 TTS 오디오 삽입
+// ========================================
+
+/**
+ * 합성 TTS WAV를 지정 오디오 트랙의 정확한 틱 위치에 overwrite
+ * WAV 길이는 서버가 원본 발화 구간과 정합해 반환하므로, overwrite(리플 없음)
+ * 후 뒤 클립이 밀리지 않아 비디오 싱크가 유지된다.
+ * @param filePath - 합성 WAV 경로
+ * @param trackIndex - 대상 오디오 트랙 인덱스
+ * @param startTicks - 타임라인 시작 틱 (문자열 — JS 부동소수 정밀도 회피)
+ * @param durationTicks - 구간 길이 틱 (문자열)
+ */
+function insertTtsAudioClip(filePath, trackIndex, startTicks, durationTicks) {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return '{"success":false,"error":"시퀀스 없음"}';
+        trackIndex = parseInt(trackIndex, 10);
+        if (isNaN(trackIndex) || trackIndex < 0 || trackIndex >= seq.audioTracks.numTracks) {
+            return '{"success":false,"error":"오디오 트랙 없음: ' + trackIndex + '"}';
+        }
+        var track = seq.audioTracks[trackIndex];
+        if (track.isLocked && track.isLocked()) {
+            return '{"success":false,"error":"트랙이 잠겨 있습니다: A' + (trackIndex + 1) + '"}';
+        }
+
+        // 1) TTS bin 확보 (없으면 생성)
+        var rootItem = app.project.rootItem;
+        var binName = "videoPlus TTS";
+        var ttsBin = null;
+        for (var i = 0; i < rootItem.children.numItems; i++) {
+            var child = rootItem.children[i];
+            if (child.name === binName && child.type === 2) {
+                ttsBin = child;
+                break;
+            }
+        }
+        if (!ttsBin) ttsBin = rootItem.createBin(binName);
+        if (!ttsBin) return '{"success":false,"error":"TTS bin 생성 실패"}';
+
+        // 2) 파일 import
+        var before = ttsBin.children.numItems;
+        var imported = app.project.importFiles([filePath], true, ttsBin, false);
+        if (!imported || ttsBin.children.numItems <= before) {
+            return '{"success":false,"error":"오디오 import 실패: ' + filePath.replace(/"/g, '\\"') + '"}';
+        }
+        var projItem = ttsBin.children[ttsBin.children.numItems - 1];
+
+        // 3) 정확한 틱 위치에 overwrite (폴백: insertClip)
+        var startSec = ticksToSeconds(startTicks);
+        if (typeof track.overwriteClip === 'function') {
+            track.overwriteClip(projItem, startSec);
+        } else {
+            track.insertClip(projItem, startSec);
+        }
+
+        // 4) 삽입된 클립 탐색 (start 틱 매칭, 1프레임 오차 허용) 후 길이 트림
+        var ticksPerFrame = seq.timebase ? parseFloat(seq.timebase) : 8467200000;
+        var targetStart = parseFloat(startTicks);
+        var newClip = null;
+        for (var c = 0; c < track.clips.numItems; c++) {
+            var clip = track.clips[c];
+            if (Math.abs(parseFloat(clip.start.ticks) - targetStart) < ticksPerFrame) {
+                newClip = clip;
+            }
+        }
+        if (newClip) {
+            var dur = parseFloat(durationTicks);
+            try {
+                // outPoint(소스 길이) + end(타임라인 끝) 모두 구간 길이에 맞춤
+                var newOut = newClip.outPoint;
+                newOut.ticks = String(dur);
+                newClip.outPoint = newOut;
+                var newEnd = newClip.end;
+                newEnd.ticks = String(targetStart + dur);
+                newClip.end = newEnd;
+            } catch (trimErr) {
+                // WAV 길이가 이미 정합돼 있어 트림 실패해도 싱크에는 영향 최소
+            }
+            return '{"success":true,"clipStartTicks":"' + newClip.start.ticks + '"}';
+        }
+        return '{"success":true,"clipStartTicks":"' + String(startTicks) + '","warning":"삽입 클립 재탐색 실패 (트림 생략)"}';
+    } catch (e) {
+        return '{"success":false,"error":"' + e.toString().replace(/"/g, '\\"') + '"}';
+    }
+}
+
+// ========================================
 // 프로젝트 식별자
 // ========================================
 

@@ -12,7 +12,7 @@ const API_URL =
   (typeof process !== "undefined" &&
     process.env &&
     process.env.REACT_APP_VIDEO_API_URL) ||
-  "https://vapi.cidermics.com"
+  "http://localhost:8000"
 
 let personHostLoaded = false
 

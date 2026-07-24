@@ -13,7 +13,7 @@ import {
 } from "../js/stateSerializer"
 
 const API_URL =
-  process.env.REACT_APP_VIDEO_API_URL || "https://vapi.cidermics.com"
+  process.env.REACT_APP_VIDEO_API_URL || "http://localhost:8000"
 
 // 디바운스: 5초 이내 재호출 무시
 const DEBOUNCE_MS = 5000

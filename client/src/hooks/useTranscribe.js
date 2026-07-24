@@ -7,7 +7,7 @@ import {
 import initWords from "../js/initWords"
 
 const API_URL =
-  process.env.REACT_APP_VIDEO_API_URL || "https://vapi.cidermics.com"
+  process.env.REACT_APP_VIDEO_API_URL || "http://localhost:8000"
 
 function generateRandomId() {
   return Math.random().toString(36).substring(2, 15)

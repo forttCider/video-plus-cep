@@ -9,6 +9,7 @@ import CutEditControls from "./CutEditControls"
 import CutEditTab from "./CutEditTab"
 import SubtitleEditTab from "./SubtitleEditTab"
 import PersonImageTab from "./PersonImageTab"
+import PronunciationTab from "./PronunciationTab"
 import {
   Dialog,
   DialogContent,
@@ -1202,6 +1203,20 @@ export default function App() {
           <PersonImageTab
             isConnected={isConnected}
             worker={workerConfirmed ? workerName : ""}
+          />
+        </div>
+
+        {/* 발음 교정 탭 - 받아쓰기 결과 필요 (내부에서 안내) */}
+        <div
+          className={`flex flex-col flex-1 min-h-0 ${activeTab !== "tts" ? "hidden" : ""}`}
+        >
+          <PronunciationTab
+            isConnected={isConnected}
+            sentences={sentences}
+            spkNames={spkNames}
+            sequenceInfo={sequenceInfo}
+            availableAudioTracks={availableAudioTracks}
+            addLog={addLog}
           />
         </div>
 
