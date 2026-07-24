@@ -126,43 +126,18 @@ export function findCurrentWordFromIndex(index, currentTimeSec) {
 }
 
 /**
- * 단어 클릭 시 타임라인 위치 계산 (앞에 삭제된 단어들의 오프셋 적용)
+ * 단어 클릭 / 문장 재생 시 타임라인 위치 계산 (앞에 삭제된 단어들의 오프셋 적용).
+ * 겹치는 삭제 구간을 중복 카운트하지 않도록 tick 기반 union 계산(getTimelinePositionTick)에 위임한다.
+ * (예전 초 단위 누적은 겹치는 삭제를 중복 합산해 재생 위치가 실제보다 앞으로 가던 버그가 있었음)
  */
 export function getTimelinePosition(targetWord, sentences) {
-  let accumulatedOffset = 0;
-
-  const words = sentences.flatMap((item) => item.words);
-
-  // 시간순 정렬 (start_at_sec 기준)
-  const sortedWords = [...words].sort((a, b) => {
-    const aStart = a.start_at_sec || 0;
-    const bStart = b.start_at_sec || 0;
-    return aStart - bStart;
-  });
-
-  const targetStartSec = targetWord.start_at_sec;
-
-  for (let i = 0; i < sortedWords.length; i++) {
-    const word = sortedWords[i];
-
-    // 대상 단어에 도달하면 중단
-    if (word.start_at_sec >= targetStartSec) {
-      const timelineStart = targetStartSec - accumulatedOffset;
-      return {
-        start: timelineStart,
-        prevEnd: timelineStart,
-        originStart: targetStartSec,
-      };
-    }
-
-    if (word.is_deleted) {
-      const wordDuration = word.end_at_sec - word.start_at_sec;
-      const gapSec = Number(BigInt(word.gap_after_tick || 0)) / TICKS_PER_SECOND;
-      accumulatedOffset += wordDuration + gapSec;
-    }
-  }
-
-  return { start: targetWord.start_at_sec, prevEnd: targetWord.start_at_sec };
+  const { startTick } = getTimelinePositionTick(targetWord, sentences);
+  const start = Number(startTick) / TICKS_PER_SECOND;
+  return {
+    start,
+    prevEnd: start,
+    originStart: targetWord.start_at_sec,
+  };
 }
 
 /**
