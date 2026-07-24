@@ -77,6 +77,31 @@ function copyToClipboard(text) {
   return null
 }
 
+// tickless 저장본 보정: start_at_tick/end_at_tick이 없으면(옛 저장 형식) 원본 ms에서
+// 프레임 정렬(secondsToTicksAligned)로 채운다. 안 채우면 buildTimelineIndex의
+// adjustedStart가 전부 0이 되어 재생 추적/문장재생 시크가 완전히 무너진다.
+// 기존 tick 값이 있으면 절대 건드리지 않는다(정상 저장본 보존 — 재정렬은 하지 않음).
+function ensureWordTicks(sentences, ticksPerFrame) {
+  const tpf = ticksPerFrame || 8467200000n
+  return sentences.map((s) => ({
+    ...s,
+    words: s.words?.map((w) => {
+      if (w.start_at_tick != null && w.end_at_tick != null) return w
+      return {
+        ...w,
+        start_at_tick:
+          w.start_at_tick != null
+            ? w.start_at_tick
+            : secondsToTicksAligned((w.start_at || 0) / 1000, tpf),
+        end_at_tick:
+          w.end_at_tick != null
+            ? w.end_at_tick
+            : secondsToTicksAligned((w.end_at || 0) / 1000, tpf),
+      }
+    }),
+  }))
+}
+
 export default function App() {
   // === States ===
   const [sequenceInfo, setSequenceInfo] = useState(null)
@@ -934,7 +959,11 @@ export default function App() {
         if (framerateInfo.timebase)
           timebaseRef.current = BigInt(framerateInfo.timebase)
         const { restoreWords } = await import("../js/initWords")
-        const gapSentences = restoreWords(savedState.sentences)
+        // tickless 저장본이면 프레임 정렬 tick 채워넣기 (재생 추적/문장재생 시크 정상화)
+        const gapSentences = ensureWordTicks(
+          restoreWords(savedState.sentences),
+          timebaseRef.current,
+        )
         setSentences(gapSentences)
         sentencesRef.current = gapSentences
         setSilenceSeconds(savedState.silenceSeconds || "1")
