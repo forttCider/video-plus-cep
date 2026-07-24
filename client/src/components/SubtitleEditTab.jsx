@@ -1,11 +1,71 @@
-import { startTransition, useState, useCallback } from "react"
-import { Copy, Check, Search } from "lucide-react"
+import {
+  startTransition,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+  useLayoutEffect,
+} from "react"
+import { Copy, Check, Search, ClipboardPaste } from "lucide-react"
 import { Button } from "./ui/button"
 import SentenceList from "./SentenceList"
 import SearchReplaceSidebar from "./SearchReplaceSidebar"
+import PasteSubtitlesDialog from "./PasteSubtitlesDialog"
 import { splitForSubtitles } from "../js/subtitleSplitter"
 
 const spkLabels = ["A", "B", "C", "D", "E", "F"]
+
+// 문장의 자막 텍스트 (편집된 captionText 우선, 없으면 단어 join)
+function sentenceCaption(s) {
+  if (!s) return ""
+  if (s.captionText != null) return s.captionText
+  return (s.words || [])
+    .filter((w) => !w.is_deleted && !w.is_edit && w.text)
+    .map((w) => w.text)
+    .join(" ")
+}
+
+// 자막 미리보기 — 리스트 상단 가로 긴 검정 바 (재생 위치 동기화)
+// 길이와 무관하게 항상 한 줄: 폭을 넘치면 폰트 크기를 자동 축소.
+function CaptionPreviewBar({ text }) {
+  const barRef = useRef(null)
+  const textRef = useRef(null)
+
+  useLayoutEffect(() => {
+    const el = textRef.current
+    const bar = barRef.current
+    if (!el || !bar) return
+    const BASE = 20 // 기본 폰트 크기(px) — 가로 폭이 넓어 크게
+    const MIN = 10 // 하한선
+    const fit = () => {
+      el.style.fontSize = BASE + "px"
+      const cs = getComputedStyle(bar)
+      const avail =
+        bar.clientWidth -
+        parseFloat(cs.paddingLeft) -
+        parseFloat(cs.paddingRight)
+      const w = el.scrollWidth // nowrap 상태의 전체 텍스트 폭
+      if (avail > 0 && w > avail) {
+        el.style.fontSize = Math.max((BASE * avail) / w, MIN) + "px"
+      }
+    }
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(bar)
+    return () => ro.disconnect()
+  }, [text])
+
+  return (
+    <div className="caption-preview-bar" ref={barRef}>
+      <span className="caption-preview-tag">미리보기</span>
+      {text ? (
+        <span className="caption-preview-text" ref={textRef}>
+          {text}
+        </span>
+      ) : null}
+    </div>
+  )
+}
 
 function subsToText(subsSentences, spkNames = {}) {
   return subsSentences
@@ -46,6 +106,10 @@ export default function SubtitleEditTab({
   editingWord,
   onStartEditing,
   onWordTextUpdate,
+  onSentenceTextUpdate,
+  onSplitCaption,
+  onMergeCaption,
+  onPasteSubtitles,
   onWordEditingEnd,
   handleCaptionClick,
   isConnected,
@@ -55,6 +119,30 @@ export default function SubtitleEditTab({
 }) {
   const [checkedSentences, setCheckedSentences] = useState(new Set())
   const [subsCopied, setSubsCopied] = useState(false)
+  const [pasteOpen, setPasteOpen] = useState(false)
+
+  // 재생 위치에 해당하는 자막 → 시간 기반(현재 시각 이하로 시작하는 마지막 자막)
+  //   붙여넣기 후엔 단어 start_at이 정확히 안 맞을 수 있어 정확 매칭 대신 시간순으로 추적
+  const previewText = useMemo(() => {
+    if (currentWordId != null && subsSentences.length) {
+      let chosen = null
+      for (const s of subsSentences) {
+        const alive = (s.words || []).filter(
+          (w) => !w.is_deleted && w.start_at != null,
+        )
+        if (!alive.length) continue
+        let start = Infinity
+        for (const w of alive) if (w.start_at < start) start = w.start_at
+        if (start <= currentWordId) chosen = s
+        else break // subsSentences는 시간순 → 더 볼 필요 없음
+      }
+      if (chosen) return sentenceCaption(chosen)
+    }
+    if (focusedWord?.sentenceIdx != null && subsSentences[focusedWord.sentenceIdx]) {
+      return sentenceCaption(subsSentences[focusedWord.sentenceIdx])
+    }
+    return ""
+  }, [currentWordId, focusedWord, subsSentences])
 
   const allSpkList = [
     ...new Set([
@@ -94,7 +182,13 @@ export default function SubtitleEditTab({
 
   return (
     <div className="flex flex-1 min-h-0">
-    <div className="flex flex-col flex-1 min-h-0">
+    <PasteSubtitlesDialog
+      open={pasteOpen}
+      onClose={() => setPasteOpen(false)}
+      onApply={onPasteSubtitles}
+    />
+    <div className="flex flex-col flex-1 min-w-0 min-h-0">
+      <CaptionPreviewBar text={previewText} />
       <div className="px-4 py-2 border-b border-border">
         <div className="flex items-center justify-between">
           {checkedSentences.size > 0 ? (
@@ -173,6 +267,15 @@ export default function SubtitleEditTab({
               }}
             />
             <div className="flex-1" />
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-7 shrink-0 mr-2"
+              onClick={() => setPasteOpen(true)}
+            >
+              <ClipboardPaste className="h-3.5 w-3.5 mr-1" />
+              자막 붙여넣기
+            </Button>
             <button
               className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mr-2"
               disabled={subsSentences.length === 0}
@@ -251,6 +354,9 @@ export default function SubtitleEditTab({
         editingWord={editingWord}
         onStartEditing={onStartEditing}
         onWordTextUpdate={onWordTextUpdate}
+        onSentenceTextUpdate={onSentenceTextUpdate}
+        onSplitCaption={onSplitCaption}
+        onMergeCaption={onMergeCaption}
         onWordEditingEnd={onWordEditingEnd}
         checkedSentences={checkedSentences}
         onCheckChange={handleCheckChange}

@@ -53,6 +53,10 @@ export function loadExtendScript() {
  * K: 75 (공통)
  */
 let _cachedKeyEvents = null
+// 텍스트 편집 중(예: 자막 붙여넣기 다이얼로그) 키 가로채기 억제 플래그.
+// true인 동안에는 어떤 경로(연결 폴링, WindowVisibilityChanged, refresh 등)로도
+// 키를 재등록하지 않아 CEP가 입력창에 키를 정상 위임한다(캐럿/한글 IME 정상화).
+let _keyInterestSuppressed = false
 
 export function registerKeyEvents() {
   try {
@@ -74,10 +78,11 @@ export function registerKeyEvents() {
     }
 
     _cachedKeyEvents = keyEvents
-    cs.registerKeyEventsInterest(JSON.stringify(keyEvents))
+    if (!_keyInterestSuppressed) cs.registerKeyEventsInterest(JSON.stringify(keyEvents))
 
     // 패널이 다시 보일 때 재등록 (Premiere가 등록을 해제할 수 있음)
     cs.addEventListener("com.adobe.csxs.events.WindowVisibilityChanged", () => {
+      if (_keyInterestSuppressed) return
       cs.registerKeyEventsInterest(JSON.stringify(keyEvents))
     })
 
@@ -94,9 +99,58 @@ export function registerKeyEvents() {
  */
 export function refreshKeyEventsRegistration() {
   if (!_cachedKeyEvents) return
+  if (_keyInterestSuppressed) return // 텍스트 편집 중엔 재등록 금지
   try {
     getCSInterface().registerKeyEventsInterest(JSON.stringify(_cachedKeyEvents))
   } catch (e) {}
+}
+
+/**
+ * 텍스트 편집 시작 — 키 가로채기를 억제하고 즉시 해제(빈 배열 등록).
+ * 이후 편집이 끝날 때까지 어떤 경로로도 재등록되지 않는다.
+ * CEP 기본 동작(포커스가 입력창이면 키를 입력창에 위임)으로 돌아가
+ * 한글 IME 조합 / 캐럿 / 마우스 클릭 커서 이동이 정상화된다.
+ */
+export function beginTextEditing() {
+  _keyInterestSuppressed = true
+  try {
+    getCSInterface().registerKeyEventsInterest("[]")
+  } catch (e) {}
+}
+
+/**
+ * 텍스트 편집 종료 — 억제를 풀고 원래 단축키 세트를 재등록한다.
+ */
+export function endTextEditing() {
+  _keyInterestSuppressed = false
+  refreshKeyEventsRegistration()
+}
+
+/**
+ * @deprecated beginTextEditing/endTextEditing 사용. 하위호환용 별칭.
+ */
+export function releaseKeyEventsInterest() {
+  beginTextEditing()
+}
+
+/**
+ * OS 클립보드 텍스트 읽기 (CEP는 ⌘V를 Premiere가 가로채므로 Node로 직접 읽음)
+ * macOS: pbpaste / Windows: Get-Clipboard. 실패 시 null
+ */
+export function readClipboard() {
+  try {
+    const { execFileSync } = require("child_process")
+    if (process.platform === "win32") {
+      return execFileSync(
+        "powershell",
+        ["-noprofile", "-command", "Get-Clipboard"],
+        { encoding: "utf8" },
+      )
+    }
+    return execFileSync("pbpaste", { encoding: "utf8" })
+  } catch (e) {
+    return null
+  }
 }
 
 /**

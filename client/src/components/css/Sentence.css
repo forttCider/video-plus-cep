@@ -196,3 +196,143 @@
   flex-wrap: wrap;
   align-items: center;
 }
+
+/* 자막 모드: 단어 칩 — 갭 없이 붙이고 사이에 점선 구분선 (브루식) */
+.sentence-words--chips {
+  gap: 0;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  background: #262626;
+  overflow: hidden;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.sentence-words--chips .word {
+  position: relative;
+  margin: 0;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #d0d0d0;
+  font-size: 13px;
+}
+
+.sentence-words--chips .word:hover {
+  background: #2e2e2e;
+}
+
+/* 단어 사이 커서(gap) — 점선 구분선 + 포커스 시 커서 */
+.sentence-words--chips .word-gap {
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 9px;
+  cursor: text;
+  outline: none;
+}
+
+.word-gap-caret {
+  width: 0;
+  height: 58%;
+  border-left: 1px dotted #5a5a5a;
+  transition: border-color 0.1s;
+}
+
+.sentence-words--chips .word-gap:hover .word-gap-caret {
+  border-left-color: #8a8a8a;
+}
+
+.sentence-words--chips .word-gap:focus .word-gap-caret {
+  border-left: 2px solid #3b82f6;
+  animation: word-gap-blink 1s step-end infinite;
+}
+
+@keyframes word-gap-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* 자막에서 삭제된 단어 칩 */
+.sentence-words--chips .word-deleted-subs {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+/* 문장 단위 편집 인풋 (브루식) */
+.sentence-caption-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 38px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #262626;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #eaeaea;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  overflow: hidden;
+  font-family: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.sentence-caption-input::placeholder {
+  color: #666;
+}
+
+.sentence-caption-input:hover {
+  border-color: #4a4a4a;
+}
+
+.sentence-caption-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  background: #2b2b2b;
+}
+
+/* 자막 미리보기 패널 (왼쪽) */
+/* 리스트 상단 가로 긴 검정 미리보기 바 */
+.caption-preview-bar {
+  position: relative;
+  flex-shrink: 0;
+  height: 80px;
+  background: #000;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 24px;
+  overflow: hidden;
+}
+
+/* 좌상단 '미리보기' 태그 */
+.caption-preview-tag {
+  position: absolute;
+  top: 6px;
+  left: 10px;
+  font-size: 10px;
+  color: #666;
+  pointer-events: none;
+}
+
+/* 중앙 자막 (번인처럼) */
+.caption-preview-text {
+  max-width: 100%;
+  text-align: center;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  /* 길이와 무관하게 항상 한 줄 (넘치는 폭은 JS가 폰트 축소로 대응) */
+  white-space: nowrap;
+  text-shadow:
+    -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000,
+    -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000,
+    0 2px 3px rgba(0, 0, 0, 0.8);
+}

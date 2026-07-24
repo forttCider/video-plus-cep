@@ -25,6 +25,9 @@ export default function SentenceList({
   editingWord,
   onStartEditing,
   onWordTextUpdate,
+  onSentenceTextUpdate,
+  onSplitCaption,
+  onMergeCaption,
   onWordEditingEnd,
   originalSentences,
   checkedSentences,
@@ -69,6 +72,9 @@ export default function SentenceList({
               editingWord={editingWord}
               onStartEditing={onStartEditing}
               onWordTextUpdate={onWordTextUpdate}
+              onSentenceTextUpdate={onSentenceTextUpdate}
+              onSplitCaption={onSplitCaption}
+              onMergeCaption={onMergeCaption}
               onWordEditingEnd={onWordEditingEnd}
               originalSentences={originalSentences}
               isChecked={checkedSentences ? checkedSentences.has(sentenceIdx) : false}

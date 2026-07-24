@@ -287,7 +287,7 @@ export default function useSubtitleKeyboard({
       if (kc === 78) { mergeWithPrev(); return }
       if (kc === 77) { mergeWithNext(); return }
       if (kc === 13) { splitSentence(); return }
-      if (kc === 75) { toggleDeleteWord(); return }
+      // 자막 모드에선 K 단어 삭제 미사용 — 텍스트 수정은 문장 인풋으로. (단어 칩=나누기/타이밍용)
     }
 
     window.addEventListener("keydown", handleKeyDownCapture, true)

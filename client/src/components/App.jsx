@@ -24,6 +24,7 @@ import DownloadDialog from "./DownloadDialog"
 import SpeakerNameDialog from "./SpeakerNameDialog"
 import SavedStateBanner from "./SavedStateBanner"
 import { splitForSubtitles } from "../js/subtitleSplitter"
+import { parsePastedLines, composeSubsFromLines } from "../js/pasteSubtitles"
 import {
   getActiveSequenceInfo,
   setPlayerPositionByTicks,
@@ -79,7 +80,7 @@ function copyToClipboard(text) {
 
 // tickless 저장본 보정: start_at_tick/end_at_tick이 없으면(옛 저장 형식) 원본 ms에서
 // 프레임 정렬(secondsToTicksAligned)로 채운다. 안 채우면 buildTimelineIndex의
-// adjustedStart가 전부 0이 되어 재생 추적/문장재생 시크가 완전히 무너진다.
+// adjustedStart가 전부 0이 되어 재생 추적이 완전히 멈춘다.
 // 기존 tick 값이 있으면 절대 건드리지 않는다(정상 저장본 보존 — 재정렬은 하지 않음).
 function ensureWordTicks(sentences, ticksPerFrame) {
   const tpf = ticksPerFrame || 8467200000n
@@ -253,7 +254,8 @@ export default function App() {
   const handleCopyLogs = useCallback(() => {
     const text = logs
       .map(
-        (l) => `${l.time.toLocaleTimeString("ko-KR")} [${l.level}] ${l.message}`,
+        (l) =>
+          `${l.time.toLocaleTimeString("ko-KR")} [${l.level}] ${l.message}`,
       )
       .join("\n")
     const ok = copyToClipboard(text)
@@ -704,6 +706,113 @@ export default function App() {
     [],
   )
 
+  // 문장 단위 편집(브루식): 인풋의 전체 텍스트를 단어별로 되써서 subs·원본 양쪽에 반영
+  //  - 원본 sentences에도 반영해야 글자수 슬라이더 재분할에도 편집이 유지됨(옵션2)
+  //  - 위치 기반 매핑: 토큰=단어 1:1, 토큰이 많으면 마지막 단어가 흡수, 적으면 남는 단어는 빈 텍스트
+  const handleSentenceTextUpdate = useCallback((sentenceIdx, newText) => {
+    const text = (newText ?? "").trim()
+    const tokens = text.length ? text.split(/\s+/) : []
+    const subs = subsSentencesRef.current
+    const target = subs[sentenceIdx]
+    if (!target) return
+    const editable = (target.words || []).filter(
+      (w) => !w.is_deleted && !w.is_edit,
+    )
+    if (editable.length === 0) return
+    const idText = new Map()
+    editable.forEach((w, i) => {
+      let t
+      if (i >= tokens.length) t = ""
+      else if (i === editable.length - 1) t = tokens.slice(i).join(" ")
+      else t = tokens[i]
+      idText.set(w.id, t)
+    })
+    const applyToWords = (ws) =>
+      ws?.map((w) => (idText.has(w.id) ? { ...w, text: idText.get(w.id) } : w))
+
+    const nextSubs = subs.map((s, i) =>
+      i === sentenceIdx
+        ? { ...s, captionText: text, words: applyToWords(s.words) }
+        : s,
+    )
+    subsSentencesRef.current = nextSubs
+    setSubsSentences(nextSubs)
+
+    const nextSentences = sentencesRef.current.map((s) => ({
+      ...s,
+      words: applyToWords(s.words),
+    }))
+    sentencesRef.current = nextSentences
+    setSentences(nextSentences)
+  }, [])
+
+  // 자막 줄 timing/id 재계산 헬퍼
+  const rebuildSubsSentence = (base, words) => {
+    const alive = words.filter((w) => !w.is_deleted && !w.is_edit)
+    const f = alive[0] || words[0]
+    const l = alive[alive.length - 1] || words[words.length - 1]
+    return {
+      ...base,
+      id: `sub_${Math.random().toString(36).slice(2, 10)}`,
+      words,
+      captionText: undefined, // 분할/병합 시 문장편집 override 해제
+      start_at: f?.start_at ?? base.start_at,
+      end_at: l?.end_at ?? base.end_at,
+      start_time: f?.start_time ?? base.start_time,
+      end_time: l?.end_time ?? base.end_time,
+    }
+  }
+
+  // 자막 분할: 문장을 wordArrayIdx 기준 둘로 (words[0..idx-1] | words[idx..])
+  const handleSplitCaption = useCallback((sentenceIdx, wordArrayIdx) => {
+    setSubsSentences((prev) => {
+      const s = prev[sentenceIdx]
+      if (!s || wordArrayIdx <= 0 || wordArrayIdx >= (s.words?.length || 0))
+        return prev
+      const left = s.words.slice(0, wordArrayIdx)
+      const right = s.words.slice(wordArrayIdx)
+      if (!left.length || !right.length) return prev
+      const next = [
+        ...prev.slice(0, sentenceIdx),
+        rebuildSubsSentence(s, left),
+        rebuildSubsSentence(s, right),
+        ...prev.slice(sentenceIdx + 1),
+      ]
+      subsSentencesRef.current = next
+      return next
+    })
+  }, [])
+
+  // 자막 병합: sentenceIdx 문장을 이전 문장과 합침 (Backspace at 시작)
+  const handleMergeCaption = useCallback((sentenceIdx) => {
+    setSubsSentences((prev) => {
+      if (sentenceIdx <= 0 || sentenceIdx >= prev.length) return prev
+      const a = prev[sentenceIdx - 1]
+      const b = prev[sentenceIdx]
+      const words = [...(a.words || []), ...(b.words || [])]
+      const next = [
+        ...prev.slice(0, sentenceIdx - 1),
+        rebuildSubsSentence(a, words),
+        ...prev.slice(sentenceIdx + 1),
+      ]
+      subsSentencesRef.current = next
+      return next
+    })
+  }, [])
+
+  // 편집자 자막 텍스트 붙여넣기 → STT 타이밍에 맞춰 자막 재조합 (기존 자막 교체)
+  const handlePasteSubtitles = useCallback(
+    (text) => {
+      const lines = parsePastedLines(text)
+      if (lines.length === 0) return
+      const composed = composeSubsFromLines(lines, sentencesRef.current)
+      subsSentencesRef.current = composed
+      setSubsSentences(composed)
+      setStatus(`자막 ${composed.length}개 등록됨`)
+    },
+    [setStatus],
+  )
+
   const handleCaptionClick = useCallback(async () => {
     const exists = await hasCaptionsBin()
     if (exists) {
@@ -959,7 +1068,7 @@ export default function App() {
         if (framerateInfo.timebase)
           timebaseRef.current = BigInt(framerateInfo.timebase)
         const { restoreWords } = await import("../js/initWords")
-        // tickless 저장본이면 프레임 정렬 tick 채워넣기 (재생 추적/문장재생 시크 정상화)
+        // tickless 저장본이면 프레임 정렬 tick 채워넣기 (재생 추적/오프셋 정상화)
         const gapSentences = ensureWordTicks(
           restoreWords(savedState.sentences),
           timebaseRef.current,
@@ -1091,28 +1200,28 @@ export default function App() {
       {!isInitializing && !workerConfirmed && (
         <div className="fixed inset-0 bg-background z-40 overflow-y-auto">
           <div className="min-h-full flex flex-col items-center justify-center px-6 py-6">
-          <div className="w-full max-w-xs flex flex-col gap-3">
-            <div className="text-center">
-              <h2 className="text-base font-semibold">편집자 확인</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                데이터 수집을 위해 편집자를 입력해주세요.
-              </p>
+            <div className="w-full max-w-xs flex flex-col gap-3">
+              <div className="text-center">
+                <h2 className="text-base font-semibold">편집자 확인</h2>
+                <p className="text-xs text-muted-foreground mt-1">
+                  데이터 수집을 위해 편집자를 입력해주세요.
+                </p>
+              </div>
+              <input
+                autoFocus
+                type="text"
+                value={workerName}
+                onChange={(e) => setWorkerName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") confirmWorker()
+                }}
+                placeholder="이름"
+                className="w-full text-sm bg-transparent border border-border rounded-md px-3 py-2 outline-none focus:border-white/40"
+              />
+              <Button onClick={confirmWorker} disabled={!workerName.trim()}>
+                다음
+              </Button>
             </div>
-            <input
-              autoFocus
-              type="text"
-              value={workerName}
-              onChange={(e) => setWorkerName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") confirmWorker()
-              }}
-              placeholder="이름"
-              className="w-full text-sm bg-transparent border border-border rounded-md px-3 py-2 outline-none focus:border-white/40"
-            />
-            <Button onClick={confirmWorker} disabled={!workerName.trim()}>
-              다음
-            </Button>
-          </div>
           </div>
         </div>
       )}
@@ -1298,6 +1407,10 @@ export default function App() {
             editingWord={editingWord}
             onStartEditing={handleStartEditing}
             onWordTextUpdate={handleWordTextUpdate}
+            onSentenceTextUpdate={handleSentenceTextUpdate}
+            onSplitCaption={handleSplitCaption}
+            onMergeCaption={handleMergeCaption}
+            onPasteSubtitles={handlePasteSubtitles}
             onWordEditingEnd={() => setEditingWord(null)}
             handleCaptionClick={handleCaptionClick}
             isConnected={isConnected}
